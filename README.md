@@ -84,30 +84,38 @@ DB_NAME=remote_reading
 
 ### 4. Set up the database
 
-```bash
-mysql -u root -p -e "CREATE DATABASE remote_reading;"
-mysql -u root -p remote_reading < "../SQL tables/database_tables.sql"
-```
-
-> **MariaDB users (e.g. XAMPP on macOS):** If you get a collation error, run this instead:
-> ```bash
-> sed 's/utf8mb4_0900_ai_ci/utf8mb4_general_ci/g' "../SQL tables/database_tables.sql" > /tmp/database_tables_local.sql
-> mysql -u root -p remote_reading < /tmp/database_tables_local.sql
-> ```
+See `SQL tables/README.md` for full import instructions including OS-specific steps.
 
 ### 5. Configure your web server
 
 Point Apache's document root to `Server Code/php/`.
 
-The simplest approach is a symlink from your web server's htdocs to the project folder:
-
+**macOS (XAMPP) — using a symlink:**
 ```bash
-# macOS (XAMPP)
 sudo ln -s "/path/to/project/Code/Server Code/php" /Applications/XAMPP/xamppfiles/htdocs/remote-reading
-
-# Linux
-sudo ln -s "/path/to/project/Code/Server Code/php" /var/www/html
 ```
+
+**Linux:**
+```bash
+sudo ln -s "/path/to/project/Code/Server Code/php" /var/www/html/remote-reading
+```
+
+**Windows (XAMPP):**
+
+Open `C:\xampp\apache\conf\extra\httpd-vhosts.conf` and add:
+
+```apache
+<VirtualHost *:80>
+    DocumentRoot "C:/path/to/project/Code/Server Code/php"
+    ServerName localhost
+    <Directory "C:/path/to/project/Code/Server Code/php">
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+```
+
+Then restart Apache in the XAMPP control panel.
 
 > **macOS note:** Keep the project outside OneDrive/iCloud folders — Apache cannot access files stored there due to macOS security restrictions.
 

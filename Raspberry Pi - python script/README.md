@@ -35,13 +35,19 @@ This folder contains the Python script that runs on the Raspberry Pi device plac
 
 ### 1. Install dependencies
 
+**macOS / Linux:**
 ```bash
+pip install -r requirements.txt
+```
+
+**Windows:**
+```powershell
 pip install -r requirements.txt
 ```
 
 ### 2. Configure database credentials
 
-Create a `.env` file in this folder (or update the credentials directly in `playrecordings.py`):
+Create a `.env` file in this folder:
 
 ```
 DB_HOST=your-rds-endpoint.rds.amazonaws.com
@@ -56,23 +62,31 @@ DB_NAME=remote_reading
 
 ### Manually
 
+**macOS / Linux / Windows:**
 ```bash
 python3 playrecordings.py
 ```
 
 ### Automatically on a Schedule (Recommended)
 
-Use a cron job to run the script every minute so it checks for due recordings automatically:
+**macOS / Linux — using cron:**
 
 ```bash
 crontab -e
 ```
 
-Add this line:
+Add this line to run the script every minute:
 
 ```
 * * * * * python3 /path/to/playrecordings.py
 ```
+
+**Windows — using Task Scheduler:**
+
+1. Open Task Scheduler
+2. Click "Create Basic Task"
+3. Set the trigger to repeat every 1 minute
+4. Set the action to run `python3 /path/to/playrecordings.py`
 
 ---
 

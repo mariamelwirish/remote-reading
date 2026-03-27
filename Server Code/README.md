@@ -107,3 +107,21 @@ DB_NAME=remote_reading
 ```
 
 The `.env` file is loaded automatically by `connect.php` using the `vlucas/phpdotenv` library.
+
+---
+
+## Dependencies
+
+PHP dependencies are managed via Composer. To install:
+
+```bash
+composer install
+```
+
+To add a new package:
+
+```bash
+composer require vendor/package-name
+```
+
+Never commit the `vendor/` folder — it is listed in `.gitignore` and regenerated automatically during deployment via `composer install`.
