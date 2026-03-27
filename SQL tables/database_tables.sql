@@ -147,7 +147,7 @@ DROP TABLE IF EXISTS `parents`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `parents` (
-  `parent_id` int NOT NULL,
+  `parent_id` int NOT NULL AUTO_INCREMENT,
   `parent_first_name` varchar(255) DEFAULT NULL,
   `parent_last_name` varchar(255) DEFAULT NULL,
   `parent_username` varchar(255) DEFAULT NULL,
@@ -203,8 +203,20 @@ DROP TABLE IF EXISTS `signup`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `signup` (
-  `parent_code` int NOT NULL,
-  `username` varchar(255) NOT NULL,
-  `password` varchar(255) NOT NULL,
-  PRIMARY KEY (`parent_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `parent_code` INT NOT NULL,
+  `infant_id` INT NOT NULL,
+  `parent_first_name` VARCHAR(255),
+  `parent_last_name` VARCHAR(255),
+  `is_used` TINYINT(1) DEFAULT 0,
+  PRIMARY KEY (`parent_code`),
+  FOREIGN KEY (`infant_id`) REFERENCES `infants`(`infant_id`)
+);
+
+CREATE TABLE `admins` (
+  `admin_id` INT NOT NULL AUTO_INCREMENT,
+  `admin_username` VARCHAR(255) NOT NULL,
+  `admin_password` VARCHAR(255) NOT NULL,
+  PRIMARY KEY (`admin_id`)
+);
+
+INSERT INTO admins (admin_username, admin_password) VALUES ('admin', 'admin123');

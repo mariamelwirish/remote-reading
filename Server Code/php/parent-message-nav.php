@@ -24,13 +24,18 @@
                           FROM recordings
                           LEFT JOIN recording_schedule
                           ON recordings.recording_id = recording_schedule.recording_id
-                          WHERE recordings.infant_id = $infant_id
+                          WHERE recordings.infant_id = ?
                           GROUP BY recordings.recording_id
-                          ORDER BY recording_id DESC;"
-                          );
-  $stmt->execute();
-  $result = $stmt->get_result();
-
+                          ORDER BY recording_id DESC");
+  
+  if ($stmt === false) {
+      error_log("Prepare error: " . $conn->error);
+      $result = false;
+  } else {
+      $stmt->bind_param("i", $infant_id);
+      $stmt->execute();
+      $result = $stmt->get_result();
+  }
 
   
 
@@ -57,7 +62,8 @@
             $profile_content = '';
             $messages_content = '';
             
-            while ($row = $result->fetch_assoc()) {
+            if ($result && $result->num_rows > 0) {
+                while ($row = $result->fetch_assoc()) {
                 // set default timezone to EST
 
                 // get current time in EST
@@ -83,7 +89,8 @@
                 } else {
                     continue;
                 }
-            }
+            }  // end while
+            }  // end if
             
             // Display tab contents
             echo '<div class="tab-pane fade show active" id="home" role="tabpanel" aria-labelledby="home-tab">';

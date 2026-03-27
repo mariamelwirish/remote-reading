@@ -1,15 +1,15 @@
 
 const recordButton = document.getElementById("record");
-recordButton.addEventListener("click", startRecording);
 const stopButton = document.getElementById("stop");
-stopButton.addEventListener("click", stopRecording);
 const pauseButton = document.getElementById("pause");
-pauseButton.addEventListener("click", pauseRecording);
 const soundClips = document.querySelector('.sound-clips');
 
+if (recordButton && stopButton && pauseButton) {
+    recordButton.addEventListener("click", startRecording);
+    stopButton.addEventListener("click", stopRecording);
+    pauseButton.addEventListener("click", pauseRecording);
+}
 
-
-console.log(record);
 let mediaRecorder;      //MediaRecorder Stream
 let gumStream;
 let recorderjsObject;   //Recorder.js Object

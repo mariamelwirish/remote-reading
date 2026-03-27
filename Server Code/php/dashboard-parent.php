@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="h-100" data-bs-theme="auto">
 <head>
-    <script src="color-modes.js"></script>
+    <script src="../js/color-modes.js"></script>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="generator" content="Hugo 0.111.3">
@@ -10,9 +10,9 @@
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js" integrity="sha384-oBqDVmMz9ATKxIep9tiCxS/Z9fNfEXiDAYTujMAeBAsjFuCZSmKbSSUnQlmh/jp3" crossorigin="anonymous"></script>
-    <script src="color-modes.js"></script>
-    <script type="text/javascript" src="recorder.js" defer></script>
-    <script type="text/javascript" src="record.js" defer></script>
+    <script src="../js/color-modes.js"></script>
+    <script type="text/javascript" src="../js/recorder.js" defer></script>
+    <script type="text/javascript" src="../js/record.js" defer></script>
     
     <meta name="theme-color" content="#7952b3">
     
@@ -105,7 +105,7 @@
 
     
     <!-- Custom styles for this template -->
-    <link href="styles/cover.css" rel="stylesheet">
+    <link href="../styles/cover.css" rel="stylesheet">
     
 </head>
 
@@ -180,7 +180,7 @@
 <header class="mb-auto">
   <div class="d-flex align-items-center">
     <div>
-      <img src="assets/emoji_books.png" alt="Logo" width="25" height="25" class="logo">
+      <img src="../assets/emoji_books.png" alt="Logo" width="25" height="25" class="logo">
     </div>
     <div class="ms-2">
       <h3 class="mb-0">Remote Reading</h3>

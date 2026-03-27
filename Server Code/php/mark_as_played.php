@@ -3,12 +3,16 @@
 //file called at record.js
 
 include_once('connect.php');
-var_dump($_POST);
-$recording_id = $_POST['recording_id'];
-$infant_id = $_POST['infant_id'];
+
+$recording_id = isset($_POST['recording_id']) ? (int)$_POST['recording_id'] : 0;
+$infant_id = isset($_POST['infant_id']) ? (int)$_POST['infant_id'] : 0;
 $recording_type = "old";
 
-var_dump($recording_id);
+if ($recording_id <= 0 || $infant_id <= 0) {
+    http_response_code(400);
+    echo "Invalid recording or infant id";
+    exit();
+}
 
 // Set the timezone to UTC
 $timezone_utc = new DateTimeZone('UTC');

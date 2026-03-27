@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="auto">
-  <head><script src="color-modes.js"></script>
+  <head><script src="../js/color-modes.js"></script>
 
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,8 +14,8 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js" integrity="sha384-oBqDVmMz9ATKxIep9tiCxS/Z9fNfEXiDAYTujMAeBAsjFuCZSmKbSSUnQlmh/jp3" crossorigin="anonymous"></script>
     <link href="../assets/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script type="text/javascript" src="recorder.js" defer></script>
-    <script type="text/javascript" src="record.js" defer></script>
+    <script type="text/javascript" src="../js/recorder.js" defer></script>
+    <script type="text/javascript" src="../js/record.js" defer></script>
     
     <meta name="theme-color" content="#7952b3">
     <style>
@@ -94,7 +94,7 @@
 
     
     <!-- Custom styles for this template -->
-    <link href="styles/cover.css" rel="stylesheet">
+    <link href="../styles/cover.css" rel="stylesheet">
   </head>
   <body class="d-flex h-100 text-center text-bg-dark">
     <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
