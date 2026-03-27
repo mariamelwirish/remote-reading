@@ -113,11 +113,37 @@ if (!is_dir($recordingsDir)) {
     mkdir($recordingsDir, 0755, true);
 }
 
-//get recordings from database
-$newrecording = "SELECT * FROM `recordings` WHERE `recording_type`= 'new' AND `infant_id` = $infant_id ORDER BY recording_date DESC";
-$oldrecording = "SELECT * FROM `recordings` WHERE `recording_type`= 'old' AND `infant_id` = $infant_id ORDER BY recording_date DESC";
-$scheduledrecording = "SELECT * FROM `recording_schedule` JOIN `recordings` ON recording_schedule.recording_id = recordings.recording_id 
-                        WHERE recording_schedule.infant_id = $infant_id AND recording_schedule.scheduled_time > CONVERT_TZ(NOW(), 'UTC', 'America/New_York')";
+//get recordings from database using prepared statements
+$stmt_new = $conn->prepare("SELECT * FROM `recordings` WHERE `recording_type`= 'new' AND `infant_id` = ? ORDER BY recording_date DESC");
+if ($stmt_new === false) {
+    error_log("Prepare error: " . $conn->error);
+    $resultnew = false;
+} else {
+    $stmt_new->bind_param("i", $infant_id);
+    $stmt_new->execute();
+    $resultnew = $stmt_new->get_result();
+}
+
+$stmt_old = $conn->prepare("SELECT * FROM `recordings` WHERE `recording_type`= 'old' AND `infant_id` = ? ORDER BY recording_date DESC");
+if ($stmt_old === false) {
+    error_log("Prepare error: " . $conn->error);
+    $resultold = false;
+} else {
+    $stmt_old->bind_param("i", $infant_id);
+    $stmt_old->execute();
+    $resultold = $stmt_old->get_result();
+}
+
+$stmt_schedule = $conn->prepare("SELECT * FROM `recording_schedule` JOIN `recordings` ON recording_schedule.recording_id = recordings.recording_id 
+                        WHERE recording_schedule.infant_id = ? AND recording_schedule.scheduled_time > CONVERT_TZ(NOW(), 'UTC', 'America/New_York')");
+if ($stmt_schedule === false) {
+    error_log("Prepare error: " . $conn->error);
+    $resultschedule = false;
+} else {
+    $stmt_schedule->bind_param("i", $infant_id);
+    $stmt_schedule->execute();
+    $resultschedule = $stmt_schedule->get_result();
+}
 
 //delete recordings from scheduled table after a day
 $num_days = 1;
@@ -126,13 +152,7 @@ $cutoff_date = date("Y-m-d H:i:s", strtotime("-$num_days days"));
 $stmt = $conn->prepare("DELETE FROM `recording_schedule` WHERE scheduled_time < ?");
 $stmt->bind_param("s", $cutoff_date);
 $stmt->execute();
-
-
-//execute statements
-$resultnew = mysqli_query($conn, $newrecording) or die(mysqli_error($conn));
-$resultold = mysqli_query($conn, $oldrecording) or die(mysqli_error($conn));
-$resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($conn));
-
+$stmt->close();
 
 
 
@@ -274,7 +294,8 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
             <div class="old-r d-flex flex-row flex-wrap" >
                 <?php
                 //loop through all rows in the database in recordings table
-                while($rows = mysqli_fetch_assoc($resultnew)) {
+                if ($resultnew && $resultnew->num_rows > 0) {
+                    while($rows = mysqli_fetch_assoc($resultnew)) {
                     //retrieve blob from recordings table
                     $blob = $rows['recording'];
                     //decode blob
@@ -312,7 +333,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                         <p class="card-text">
                             <!-- when recording played, markAsPlayed defined in record.js-->
                             <audio controls>
-                            <source src = "<?php echo "recordings/" . $fileSource; ?>" type = "audio/wav">  
+                            <source src = "<?php echo $recordingsUrlPrefix . $fileSource; ?>" type = "audio/wav">  
                             </audio><br>
                             <!--Play now button -->
                             <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>
@@ -338,7 +359,8 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                 </div>
                 <br><br>
             <?php
-                }
+                }  // end while
+                } // end if
             ?>
            </div>
             </div>
@@ -353,14 +375,15 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
             <div class="old-r d-flex flex-row flex-wrap" >
                     <?php
                     //loop through all rows in the database in recordings table
-                    while($rows = mysqli_fetch_assoc($resultold)) {
+                    if ($resultold && $resultold->num_rows > 0) {
+                        while($rows = mysqli_fetch_assoc($resultold)) {
                         //retrieve blob from recordings table
                         $blob = $rows['recording'];
                         //decode blob
                         $blob = hex2bin($blob);
                         //default generated filename when audio file created
                         $fileName = $rows['recording_name'] . ".wav";
-                        file_put_contents("recordings/" . $fileName,$blob);
+                        file_put_contents($recordingsDir . "/" . $fileName, $blob);
                         $fileSource = $fileName; 
                         $is_played = $rows['is_played'];
                         //if parents inputted a name for the audio file, user that name, otherwise use default generated name
@@ -381,7 +404,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                         <div class="card-body">
                             <p class="card-text">
                                 <audio controls>
-                                <source src = "<?php echo "recordings/" . $fileSource; ?>" type = "audio/wav">  
+                                <source src = "<?php echo $recordingsUrlPrefix . $fileSource; ?>" type = "audio/wav">  
                                 </audio><br>
                                 <!--Play now button -->
                                 <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>
@@ -399,7 +422,8 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                     </div>
                     <br><br>    
                 <?php
-                    }
+                    }  // end while
+                    } // end if
                 ?>
 
             </div>
@@ -412,14 +436,15 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                 <h2 class="w-101">Scheduled Recordings</h2>
                     <?php
                     //loop through all rows in the database in recordings table
-                    while($rows = mysqli_fetch_assoc($resultschedule)) {
+                    if ($resultschedule && $resultschedule->num_rows > 0) {
+                        while($rows = mysqli_fetch_assoc($resultschedule)) {
                         //retrieve blob from recordings table
                         $blob = $rows['recording'];
                         //decode blob
                         $blob = hex2bin($blob);
                         //default generated filename when audio file created
                         $fileName = $rows['recording_name'] . ".wav";
-                        file_put_contents("recordings/" . $fileName,$blob);
+                        file_put_contents($recordingsDir . "/" . $fileName, $blob);
                         $fileSource = $fileName; 
                         $is_played = $rows['is_played'];
                         //if parents inputted a name for the audio file, user that name, otherwise use default generated name
@@ -441,7 +466,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                         <div class="card-body">
                             <p class="card-text">
                                 <audio controls>
-                                <source src = "<?php echo "recordings/" . $fileSource; ?>" type = "audio/wav">  
+                                <source src = "<?php echo $recordingsUrlPrefix . $fileSource; ?>" type = "audio/wav">  
                                 </audio><br>
                                 <!--Play now button -->
                                 <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>
@@ -461,7 +486,8 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                     </div>
                     <br><br>    
                 <?php
-                    }
+                    }  // end while
+                    } // end if
                 ?>
             </div>
         </div>
