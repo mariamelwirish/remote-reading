@@ -8,9 +8,9 @@
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js" integrity="sha384-w76AqPfDkMBDXo30jS1Sgez6pr3x5MlQ1ZAGC+nuZB+EYdgRZgiwxhTBTkF7CXvN" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js" integrity="sha384-oBqDVmMz9ATKxIep9tiCxS/Z9fNfEXiDAYTujMAeBAsjFuCZSmKbSSUnQlmh/jp3" crossorigin="anonymous"></script>
-    <script type="text/javascript" src="recorder.js" defer></script>
-    <script type="text/javascript" src="record.js" defer></script>
-    <script src="color-modes.js"></script>
+    <script type="text/javascript" src="../js/recorder.js" defer></script>
+    <script type="text/javascript" src="../js/record.js" defer></script>
+    <script src="../js/color-modes.js"></script>
 
     
 <meta name="theme-color" content="#7952b3">
@@ -92,7 +92,7 @@
 
     
     <!-- Custom styles for this template -->
-    <link href="/styles/sidebar.css" rel="stylesheet">
+    <link href="../styles/sidebar.css" rel="stylesheet">
 
 </head>
 <body>
@@ -106,6 +106,12 @@ $room_number = $_SESSION['room'];
 $infant_first_name = $_SESSION['infant_first_name'];
 $infant_last_name = $_SESSION['infant_last_name'];
 $infant_id = $_SESSION['infant_id'];
+
+$recordingsDir = __DIR__ . '/../recordings';
+$recordingsUrlPrefix = '../recordings/';
+if (!is_dir($recordingsDir)) {
+    mkdir($recordingsDir, 0755, true);
+}
 
 //get recordings from database
 $newrecording = "SELECT * FROM `recordings` WHERE `recording_type`= 'new' AND `infant_id` = $infant_id ORDER BY recording_date DESC";
@@ -214,7 +220,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
 
   <div class="d-flex flex-column flex-shrink-0 p-3 text-bg-dark" style="width: 280px;">
     <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-white text-decoration-none">
-      <img src="assets/emoji_books.png" alt="Logo" width="25" height="25" class="logo me-2">
+      <img src="../assets/emoji_books.png" alt="Logo" width="25" height="25" class="logo me-2">
       <span class="fs-4">Remote Reading</span>
     </a>
     <hr>
@@ -275,7 +281,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                     $blob = hex2bin($blob);
                     //default generated filename when audio file created
                     $fileName = $rows['recording_name'] . ".wav";
-                    file_put_contents("recordings/" . $fileName,$blob);
+                    file_put_contents($recordingsDir . "/" . $fileName, $blob);
                     $fileSource = $fileName; 
                     $is_played = $rows['is_played'];
                     //if parents inputted a name for the audio file, user that name, otherwise use default generated name
@@ -438,7 +444,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
                                 <source src = "<?php echo "recordings/" . $fileSource; ?>" type = "audio/wav">  
                                 </audio><br>
                                 <!--Play now button -->
-                                <button id="play-now-button" type="button" class="btn btn-primary">Play Now</button>
+                                <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>
                                 <!--Schedule message button -->
                                 <button id="schedule-button" type="button" class="btn btn-secondary" onclick="rescheduleRecording(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Reschedule</button>
                                 <!--Delete button -->
@@ -494,7 +500,7 @@ $resultschedule = mysqli_query($conn, $scheduledrecording) or die(mysqli_error($
   </div>
 </div>
 
-<script src="sidebar.js"></script>  
+<script src="../js/sidebar.js"></script>  
 </main>
 
    

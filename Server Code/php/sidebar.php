@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en" data-bs-theme="auto">
-  <head><script src="color-modes.js"></script>
+  <head><script src="../js/color-modes.js"></script>
 
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -98,7 +98,7 @@
 
     
     <!-- Custom styles for this template -->
-    <link href="/styles/sidebar.css" rel="stylesheet">
+    <link href="../styles/sidebar.css" rel="stylesheet">
   </head>
   <body>
     <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
@@ -182,7 +182,7 @@
 
   <div class="d-flex flex-column flex-shrink-0 p-3 text-bg-dark" style="width: 280px;">
   <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-white text-decoration-none">
-    <img src="assets/emoji_books.png" alt="Logo" width="25" height="25" class="logo me-2">
+    <img src="../assets/emoji_books.png" alt="Logo" width="25" height="25" class="logo me-2">
     <span class="fs-4">Remote Reading</span>
   </a>
     <hr>
@@ -236,7 +236,7 @@
 
     
 
-      <script src="sidebar.js"></script>
+      <script src="../js/sidebar.js"></script>
   </body>
 </html>
 
