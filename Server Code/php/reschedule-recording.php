@@ -14,31 +14,22 @@ if ($recording_id <= 0 || $infant_id <= 0 || $scheduled_time === '') {
     exit();
 }
 
-
-// Set the timezone to UTC
-$timezone_utc = new DateTimeZone('UTC');
-
-// Create a DateTime object with the current date and time in UTC
-$date_utc = new DateTime('now', $timezone_utc);
-// Add 5 seconds to the DateTime object
-$date_utc->add(new DateInterval('PT5S'));
-// Set the timezone to Eastern Standard Time (EST)
-$timezone_est = new DateTimeZone('America/New_York');
-$date_est = $date_utc->setTimezone($timezone_est);
-
-// Format the date and time as a string
-$date_str = $date_est->format('Y-m-d H:i:s');
-
-
-$stmt = $conn->prepare("UPDATE `recording_schedule` SET `scheduled_time` = ? WHERE `recording_id` = ?");
-$stmt->bind_param("si", $scheduled_time,$recording_id);
+$stmt = $conn->prepare("UPDATE recording_schedule SET scheduled_time = ?, infant_id = ? WHERE recording_id = ?");
+$stmt->bind_param("sii", $scheduled_time, $infant_id, $recording_id);
 $stmt->execute();
 
-$old_recording = 'old';
+// Rescheduling should not mark as played.
+$new_recording = 'new';
+$played_zero = 0;
+$null_date_played = null;
+$stmt_update = $conn->prepare("UPDATE recordings SET recording_type = ?, is_played = ?, date_played = ? WHERE recording_id = ?");
+$stmt_update->bind_param("sisi", $new_recording, $played_zero, $null_date_played, $recording_id);
+$stmt_update->execute();
 
-$stmt = $conn->prepare("UPDATE `recordings` SET `recording_type` = ?,`date_played`=? WHERE `recording_id` =  ?");
-$stmt->bind_param("ssi", $old_recording, $scheduled_time, $recording_id);
-$stmt->execute();
+$stmt->close();
+$stmt_update->close();
+
+echo "OK";
 
 
 ?>

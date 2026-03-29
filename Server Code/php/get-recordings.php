@@ -107,10 +107,12 @@ $infant_first_name = $_SESSION['infant_first_name'];
 $infant_last_name = $_SESSION['infant_last_name'];
 $infant_id = $_SESSION['infant_id'];
 
-$recordingsDir = __DIR__ . '/../recordings';
-$recordingsUrlPrefix = '../recordings/';
-if (!is_dir($recordingsDir)) {
-    mkdir($recordingsDir, 0755, true);
+function build_wav_data_url($hexBlob) {
+  $binary = hex2bin($hexBlob);
+  if ($binary === false || $binary === null) {
+    return '';
+  }
+  return 'data:audio/wav;base64,' . base64_encode($binary);
 }
 
 //get recordings from database using prepared statements
@@ -124,7 +126,12 @@ if ($stmt_new === false) {
     $resultnew = $stmt_new->get_result();
 }
 
-$stmt_old = $conn->prepare("SELECT * FROM `recordings` WHERE `recording_type`= 'old' AND `infant_id` = ? ORDER BY recording_date DESC");
+$stmt_old = $conn->prepare("SELECT * FROM recordings r WHERE r.recording_type = 'old' AND r.infant_id = ?
+  AND NOT EXISTS (
+    SELECT 1 FROM recording_schedule rs
+    WHERE rs.recording_id = r.recording_id
+  )
+  ORDER BY r.recording_date DESC");
 if ($stmt_old === false) {
     error_log("Prepare error: " . $conn->error);
     $resultold = false;
@@ -134,8 +141,12 @@ if ($stmt_old === false) {
     $resultold = $stmt_old->get_result();
 }
 
-$stmt_schedule = $conn->prepare("SELECT * FROM `recording_schedule` JOIN `recordings` ON recording_schedule.recording_id = recordings.recording_id 
-                        WHERE recording_schedule.infant_id = ? AND recording_schedule.scheduled_time > CONVERT_TZ(NOW(), 'UTC', 'America/New_York')");
+$stmt_schedule = $conn->prepare("SELECT rs.recording_id, MAX(rs.scheduled_time) AS scheduled_time, r.*
+    FROM recording_schedule rs
+    JOIN recordings r ON rs.recording_id = r.recording_id
+    WHERE rs.infant_id = ?
+    GROUP BY rs.recording_id
+    ORDER BY scheduled_time ASC");
 if ($stmt_schedule === false) {
     error_log("Prepare error: " . $conn->error);
     $resultschedule = false;
@@ -274,7 +285,7 @@ $stmt->close();
       </a>
       <ul class="dropdown-menu dropdown-menu-dark text-small shadow">
         
-        <li><a class="dropdown-item" href="#">Change Room</a></li>
+        <li><a class="dropdown-item" href="nurse-rooms.php">Change Room</a></li>
         <li><hr class="dropdown-divider"></li>
         <li><a class="dropdown-item" href="logout.php">Sign out</a></li>
       </ul>
@@ -296,14 +307,9 @@ $stmt->close();
                 //loop through all rows in the database in recordings table
                 if ($resultnew && $resultnew->num_rows > 0) {
                     while($rows = mysqli_fetch_assoc($resultnew)) {
-                    //retrieve blob from recordings table
-                    $blob = $rows['recording'];
-                    //decode blob
-                    $blob = hex2bin($blob);
                     //default generated filename when audio file created
                     $fileName = $rows['recording_name'] . ".wav";
-                    file_put_contents($recordingsDir . "/" . $fileName, $blob);
-                    $fileSource = $fileName; 
+                  $fileSource = build_wav_data_url($rows['recording']);
                     $is_played = $rows['is_played'];
                     //if parents inputted a name for the audio file, user that name, otherwise use default generated name
                     if ($rows['requested_name'] == NULL) {
@@ -333,7 +339,7 @@ $stmt->close();
                         <p class="card-text">
                             <!-- when recording played, markAsPlayed defined in record.js-->
                             <audio controls>
-                            <source src = "<?php echo $recordingsUrlPrefix . $fileSource; ?>" type = "audio/wav">  
+                            <source src = "<?php echo $fileSource; ?>" type = "audio/wav">  
                             </audio><br>
                             <!--Play now button -->
                             <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>
@@ -377,14 +383,9 @@ $stmt->close();
                     //loop through all rows in the database in recordings table
                     if ($resultold && $resultold->num_rows > 0) {
                         while($rows = mysqli_fetch_assoc($resultold)) {
-                        //retrieve blob from recordings table
-                        $blob = $rows['recording'];
-                        //decode blob
-                        $blob = hex2bin($blob);
                         //default generated filename when audio file created
                         $fileName = $rows['recording_name'] . ".wav";
-                        file_put_contents($recordingsDir . "/" . $fileName, $blob);
-                        $fileSource = $fileName; 
+                      $fileSource = build_wav_data_url($rows['recording']);
                         $is_played = $rows['is_played'];
                         //if parents inputted a name for the audio file, user that name, otherwise use default generated name
                         if ($rows['requested_name'] == NULL) {
@@ -404,7 +405,7 @@ $stmt->close();
                         <div class="card-body">
                             <p class="card-text">
                                 <audio controls>
-                                <source src = "<?php echo $recordingsUrlPrefix . $fileSource; ?>" type = "audio/wav">  
+                                <source src = "<?php echo $fileSource; ?>" type = "audio/wav">  
                                 </audio><br>
                                 <!--Play now button -->
                                 <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>
@@ -438,14 +439,9 @@ $stmt->close();
                     //loop through all rows in the database in recordings table
                     if ($resultschedule && $resultschedule->num_rows > 0) {
                         while($rows = mysqli_fetch_assoc($resultschedule)) {
-                        //retrieve blob from recordings table
-                        $blob = $rows['recording'];
-                        //decode blob
-                        $blob = hex2bin($blob);
                         //default generated filename when audio file created
                         $fileName = $rows['recording_name'] . ".wav";
-                        file_put_contents($recordingsDir . "/" . $fileName, $blob);
-                        $fileSource = $fileName; 
+                      $fileSource = build_wav_data_url($rows['recording']);
                         $is_played = $rows['is_played'];
                         //if parents inputted a name for the audio file, user that name, otherwise use default generated name
                         if ($rows['requested_name'] == NULL) {
@@ -466,7 +462,7 @@ $stmt->close();
                         <div class="card-body">
                             <p class="card-text">
                                 <audio controls>
-                                <source src = "<?php echo $recordingsUrlPrefix . $fileSource; ?>" type = "audio/wav">  
+                                <source src = "<?php echo $fileSource; ?>" type = "audio/wav">  
                                 </audio><br>
                                 <!--Play now button -->
                                 <button id="play-now-button" type="button" class="btn btn-primary" onclick="markAsPlayed(<?php echo $rows['recording_id'] . ',' . $rows['infant_id']; ?>)">Play Now</button>

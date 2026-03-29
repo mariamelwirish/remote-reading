@@ -51,6 +51,7 @@ CREATE TABLE `infants` (
   `infant_last_name` varchar(255) DEFAULT NULL,
   `room_number` int NOT NULL,
   `parent_id` int DEFAULT NULL,
+  `nurse_id` int DEFAULT NULL,
   PRIMARY KEY (`infant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
