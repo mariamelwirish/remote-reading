@@ -28,12 +28,16 @@ $date_est = $date_utc->setTimezone($timezone_est);
 // Format the date and time as a string
 $date_str = $date_est->format('Y-m-d H:i:s');
 
-$stmt = $conn->prepare("INSERT INTO `recording_schedule`(recording_id, scheduled_time, infant_id) VALUES(?, ?, ?)");
-$stmt->bind_param("isi", $recording_id, $date_str, $infant_id);
+$stmt = $conn->prepare("DELETE FROM recording_schedule WHERE recording_id = ?");
+$stmt->bind_param("i", $recording_id);
 $stmt->execute();
+$stmt->close();
 
 $stmt = $conn->prepare("UPDATE recordings SET is_played = 1, date_played = ?, recording_type = ? WHERE recording_id = ? ");
 $stmt->bind_param("ssi", $date_str, $recording_type, $recording_id);
 $stmt->execute();
+$stmt->close();
+
+echo "OK";
 
 ?>

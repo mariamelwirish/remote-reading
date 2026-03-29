@@ -246,7 +246,7 @@ function scheduleRecording(recordingId, infant_id, requestedTime) {
         const sendschedule = document.getElementById('sendschedule');
 
         //Event listener for the schedule button of the modal
-        sendschedule.addEventListener("click", function(event) {
+        sendschedule.onclick = function(event) {
             event.preventDefault();
             
             //get values inputted into modal message box
@@ -284,7 +284,7 @@ function scheduleRecording(recordingId, infant_id, requestedTime) {
             };
             xhs.open("POST", "schedule-recording.php", true);
             xhs.send(formData);
-        });
+        };
     }
         
 }
@@ -297,7 +297,7 @@ function rescheduleRecording(recordingId, infant_id, requestedTime) {
         const sendschedule = document.getElementById('sendschedule');
     
     //Event listener for the schedule button of the modal
-    sendschedule.addEventListener("click", function(event) {
+    sendschedule.onclick = function(event) {
         event.preventDefault();
         
         //get values inputted into modal message box
@@ -336,5 +336,5 @@ function rescheduleRecording(recordingId, infant_id, requestedTime) {
         };
         xhs.open("POST", "reschedule-recording.php", true);
         xhs.send(formData);
-    });
+    };
 }
