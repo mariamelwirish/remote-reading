@@ -63,27 +63,35 @@ CREATE TABLE parent_baby (
 );
 
 -- Recordings table
+-- description: parent-submitted summary of the recording content
+-- ai_transcript, ai_flags, ai_summary: nullable placeholders for Phase 5 AI content check
 CREATE TABLE recordings (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     baby_id CHAR(36) NOT NULL,
     parent_id CHAR(36) NOT NULL,
     title VARCHAR(255),
+    description TEXT,
     s3_key VARCHAR(500) NOT NULL,
     duration_seconds INTEGER NOT NULL,
-    status ENUM('pending_review', 'scheduled', 'played', 'returned', 'rejected') DEFAULT 'pending_review',
+    status ENUM('pending_review', 'scheduled', 'played', 'rejected') DEFAULT 'pending_review',
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reviewed_at TIMESTAMP,
     reviewed_by CHAR(36),
+    ai_transcript TEXT,
+    ai_flags TEXT,
+    ai_summary TEXT,
     FOREIGN KEY (baby_id) REFERENCES babies(id),
     FOREIGN KEY (parent_id) REFERENCES users(id)
 );
 
 -- Recording status history table
+-- Logs every status transition with who made it and when
+-- 'returned' removed from ENUM — nurse actions are now schedule, play now, or reject only
 CREATE TABLE recording_status_history (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
-    from_status ENUM('pending_review', 'scheduled', 'played', 'returned', 'rejected'),
-    to_status ENUM('pending_review', 'scheduled', 'played', 'returned', 'rejected') NOT NULL,
+    from_status ENUM('pending_review', 'scheduled', 'played', 'rejected'),
+    to_status ENUM('pending_review', 'scheduled', 'played', 'rejected') NOT NULL,
     changed_by CHAR(36) NOT NULL,
     note TEXT,
     changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -92,6 +100,8 @@ CREATE TABLE recording_status_history (
 );
 
 -- Schedules table
+-- One row per scheduling event. A recording can be scheduled multiple times.
+-- node-cron only processes rows with status = 'pending'
 CREATE TABLE schedules (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
@@ -105,6 +115,7 @@ CREATE TABLE schedules (
 );
 
 -- Playback log table
+-- Written after Pi confirms playback. Schedules = intentions. Playback log = reality.
 CREATE TABLE playback_log (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
@@ -117,32 +128,8 @@ CREATE TABLE playback_log (
     FOREIGN KEY (incubator_id) REFERENCES incubators(id)
 );
 
--- Messages table (per-recording thread)
-CREATE TABLE messages (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
-    recording_id CHAR(36) NOT NULL,
-    sender_id CHAR(36) NOT NULL,
-    receiver_id CHAR(36) NOT NULL,
-    body TEXT NOT NULL,
-    is_read BOOLEAN DEFAULT FALSE,
-    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (recording_id) REFERENCES recordings(id),
-    FOREIGN KEY (sender_id) REFERENCES users(id),
-    FOREIGN KEY (receiver_id) REFERENCES users(id)
-);
-
--- General messages table
-CREATE TABLE general_messages (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
-    sender_id CHAR(36) NOT NULL,
-    receiver_id CHAR(36) NOT NULL,
-    body TEXT NOT NULL,
-    is_read BOOLEAN DEFAULT FALSE,
-    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sender_id) REFERENCES users(id),
-    FOREIGN KEY (receiver_id) REFERENCES users(id)
-);
-
+-- Trigger: enforce maximum 2 parents per baby
+-- Enforced at both application level and database level
 DELIMITER //
 
 CREATE TRIGGER enforce_max_two_parents
@@ -157,4 +144,3 @@ BEGIN
 END//
 
 DELIMITER ;
-

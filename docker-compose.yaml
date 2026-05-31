@@ -14,6 +14,17 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-
+  localstack:
+    image: localstack/localstack:3.8.0 # official localstack docker image
+    container_name: remote-reading-localstack 
+    ports:
+      - "4566:4566" # map the localstack edge port to the host
+    environment: # setting the services (s3, ses) and region for localstack
+      - SERVICES=s3,ses
+      - DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack_data:/var/lib/localstack
 volumes:
   mysql_data:
+  localstack_data:
+  
