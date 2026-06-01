@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const pool = require('./config/db');
 const authRoutes = require('./routes/auth'); // Imports the auth authorization routes defined in auth.js
+const recordingsRoutes = require('./routes/recordings'); // Imports the recordings routes defined in recordings.js
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use('/api/v1/auth', authRoutes); // Mounts the auth routes at /api/v1/auth. 
-                                     // FOR ME: for example, the login route will be accessible at /api/v1/auth/login.
+app.use('/api/v1/recordings', recordingsRoutes); // Mounts the recordings routes at /api/v1/recordings.
 
 // Health check route
 app.get('/', (req, res) => {
