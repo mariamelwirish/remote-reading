@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const authenticate = require('../middleware/auth');
 const {getPresignedUrl} = require('../utils/s3');
+const {v4: uuidv4} = require('uuid');
 
 
 // GET api/v1/babies/:id/recordings
@@ -50,7 +51,7 @@ router.get('/:id/recordings', authenticate, async (req, res) => {
         res.json({ recordings: recordingsWithUrls});
     } catch (err) {
         console.error('Error fetching recordings:', err);
-        res.status(500).json({ error: 'Internal Server Error'});
+        res.status(500).json({ error: 'Internal Server Error!'});
     }
 });
 
@@ -70,7 +71,7 @@ router.get('/:id', authenticate, async(req, res) => {
             );
 
             if (link.length === 0) {
-                return res.status(403).json({ error: 'Access denied' });
+                return res.status(403).json({ error: 'Access Denied!' });
             }
         }
 
@@ -100,14 +101,83 @@ router.get('/:id', authenticate, async(req, res) => {
         );
 
         if (rows.length === 0) {
-            return res.status(404).json({ error: 'Baby not found' });
+            return res.status(404).json({ error: 'Baby not found!' });
         }
 
         return res.status(200).json(rows[0]);
 
     } catch(err) {
         console.error('GET /babies/:id error:', err);
-        return res.status(500).json({error: 'Internal Server Error'});
+        return res.status(500).json({error: 'Internal Server Error!'});
+    }
+});
+
+// POST /api/v1/babies
+// ADMIN ONLY - create a new baby record
+router.post('/', authenticate, async(req, res) => {
+    try {
+        const user = req.user;
+        
+        if(user.role !== 'admin') {
+            return res.status(403).json({error: 'Forbidden'});
+        }
+
+        const { first_name, last_name, date_of_birth, gender, incubator_id, admission_date } = req.body;
+
+        // Error on empty field.
+        if (!first_name || !last_name || !date_of_birth || !gender || !incubator_id || !admission_date) {
+            return res.status(400).json({ error: 'All fields are required: First Name, Last Name, Date of Birth, Gender, Incubator ID, Admission Date' });
+        }
+
+        // Error on invalid gender.
+        const validGenders = ['male', 'female', 'other']; // must match the database ENUM
+        if (!validGenders.includes(gender)) {
+            return res.status(400).json({ error: 'Gender must be Male, Female, or Other!' });
+        }
+
+        const [incubatorRows] = await pool.query(
+            'SELECT id, is_active FROM incubators WHERE id = ?',
+            [incubator_id]
+        );
+
+        // Error on invalid incubators.
+        if (incubatorRows.length === 0) {
+            return res.status(400).json({ error: 'Incubator does not exist!' });
+        }
+
+        // Error on inactive incubators.
+        if (incubatorRows[0].is_active !== 1) {
+            return res.status(400).json({ error: 'Incubator is inactive!' });
+        }
+
+        // Error on already occupied incubators. 
+        const [occupiedRows] = await pool.query(
+            "SELECT id FROM babies WHERE incubator_id = ? AND status = 'active'",
+            [incubator_id]
+        );
+        if (occupiedRows.length > 0) {
+            return res.status(400).json({ error: 'This incubator is already occupied by another baby!' });
+        }
+
+        const babyId = uuidv4();
+
+        await pool.query(
+            `INSERT INTO babies (id, first_name, last_name, date_of_birth, gender, incubator_id, admission_date, status, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW())
+            `,
+            [babyId, first_name, last_name, date_of_birth, gender, incubator_id, admission_date, user.id]
+        );
+
+        const [newBaby] = await pool.query(
+            'SELECT * FROM babies WHERE id = ?',
+            [babyId]
+        );
+
+        return res.status(201).json({ baby: newBaby[0] });
+
+    } catch(err) {
+        console.error('POST /babies error:', err);
+        return res.status(500).json({ error: 'Internal Server Error!' });
     }
 });
 
