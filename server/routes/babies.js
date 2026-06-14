@@ -54,4 +54,61 @@ router.get('/:id/recordings', authenticate, async (req, res) => {
     }
 });
 
+
+// GET /api/v1/babies/:id
+// Get a single baby's profile (role-scoped).
+router.get('/:id', authenticate, async(req, res) => {
+    try {
+        const babyId = req.params.id;
+        const user = req.user;
+
+        // Role-based scoping
+        if(user.role === 'parent') {
+            const[link] = await pool.query(
+                'SELECT id FROM parent_baby WHERE parent_id = ? AND baby_id = ?',
+                [user.id, babyId]
+            );
+
+            if (link.length === 0) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+        }
+
+        if (user.role === 'nurse') {
+            // NOTE FOR LATER: Nurses can access any active baby — room scoping enforced at dashboard level!
+        }
+
+        const [rows] = await pool.query(
+            `SELECT
+                b.id,
+                b.first_name,
+                b.last_name,
+                b.date_of_birth,
+                b.gender,
+                b.admission_date,
+                b.discharge_date,
+                b.status,
+                i.incubator_code,
+                r.room_number,
+                r.floor,
+                r.wing
+            FROM babies b
+            JOIN incubators i ON b.incubator_id = i.id
+            JOIN rooms r ON i.room_id = r.id
+            WHERE b.id = ?`,
+            [babyId]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Baby not found' });
+        }
+
+        return res.status(200).json(rows[0]);
+
+    } catch(err) {
+        console.error('GET /babies/:id error:', err);
+        return res.status(500).json({error: 'Internal Server Error'});
+    }
+});
+
 module.exports = router;
