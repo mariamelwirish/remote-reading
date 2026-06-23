@@ -65,6 +65,62 @@ function validateBabyFields({ first_name, last_name, date_of_birth, gender, incu
     return null;
 }
 
+// GET api/v1/babies/ (Admin Only).
+// Get all babies with optional active/discharged filter.
+router.get('/', authenticate, requireRole('admin'), async(req, res) => {
+    const {status} = req.query;
+
+    // 1. Validate status filter if provided
+    const allowedStatuses = ['active', 'discharged'];
+    if (status && !allowedStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Invalid status filter. Use active or discharged!' });
+    }
+
+    try {
+        // 2. Build query dynamically based on whether ?status was passed
+        let query = `
+            SELECT
+                b.id,
+                b.first_name,
+                b.last_name,
+                b.date_of_birth,
+                b.gender,
+                b.admission_date,
+                b.discharge_date,
+                b.status,
+                b.created_at,
+                i.id AS incubator_id,
+                i.incubator_code,
+                r.id AS room_id,
+                r.room_number,
+                r.floor,
+                r.wing
+            FROM babies b
+            LEFT JOIN incubators i ON b.incubator_id = i.id
+            LEFT JOIN rooms r ON i.room_id = r.id
+        `;
+
+        const params = [];
+
+        if (status) {
+            query += ' WHERE b.status = ?';
+            params.push(status);
+        }
+
+        query += ' ORDER BY b.created_at DESC';
+
+        // 3. Run query
+        const [rows] = await pool.query(query, params);
+
+        return res.status(200).json(rows);
+    } catch (err) {
+        console.error('GET /babies error:', err);
+        return res.status(500).json({ error: 'Internal server error!' });
+    }
+
+});
+
+
 // GET api/v1/babies/:id/recordings
 // Get all recordings for a specific baby
 router.get('/:id/recordings', authenticate, async (req, res) => {
@@ -359,7 +415,7 @@ router.patch('/:id/discharge', authenticate, requireRole('admin'), async(req, re
 
 // PATCH /babies/:id/readmit - Admin Only.
 // Undo Discharge.
-router.patch('/:id/readmit/', authenticate, requireRole('admin'), async(req, res) => {
+router.patch('/:id/readmit', authenticate, requireRole('admin'), async(req, res) => {
     const {id} = req.params;
     try {
         // 1. Check if baby exists.
