@@ -1,3 +1,5 @@
+// recordings.js
+
 /*
 STRUCTURE
 1. Imports
@@ -20,6 +22,7 @@ const mm = require('music-metadata'); // music metadata library, used to read du
 const pool = require('../config/db'); // database connection 
 const authenticate = require('../middleware/auth'); // JWT middleware
 const {uploadAudio} = require('../utils/s3'); // s3 upload utility function
+const {notifyParentScheduled, notifyParentRescheduled, notifyParentRejected} = require('../utils/ses');
 const { v4: uuidv4 } = require('uuid');
 
 
@@ -105,6 +108,217 @@ router.post('/', authenticate, upload.single('audio'), async (req, res) => { // 
         console.error('Error uploading recording:', err);
         res.status(500).json({ error: 'Internal server error' });
    }
+});
+
+// PATCH /api/v1/rercordings/:id/review
+// Nurse or Admin reviews a recording: schedule or reject.
+router.patch ('/:id/review', authenticate, async(req, res) => {
+    try {
+        // 1. Role Check.
+        if(req.user.role !== 'nurse' && req.user.role !== 'admin') {
+            return res.status(403).json({error: 'Forbidden!'});
+        }
+
+        const recording_id = req.params.id;
+        const {action, scheduled_time, note} = req.body;
+
+        // 2. Validate Action.
+        const validActions = ['schedule', 'reject'];
+        if(!action || !validActions.includes(action)) {
+            return res.status(400).json({error: 'action must be schedule or reject!'});
+        }
+
+        // 3. Fetch the recording.
+        const [recordings] = await pool.query(
+            `SELECT r.*, b.id AS baby_id 
+            FROM recordings r
+            JOIN babies b ON r.baby_id = b.id
+            WHERE r.id = ?
+            `,
+            [recording_id]
+        );
+
+        if(recordings.length === 0) {
+            return res.status(404).json({error: 'Recording not found!'});
+        }
+
+        const recording = recordings[0];
+
+        // 4. GUARD: played recordings can't be unchanged.
+        // This is because they went out from the queue. If they need to be changed, it is handled later at the MQTT.
+        if(recording.status === 'played') {
+            return res.status(400).json({error: 'Cannot review a recording that has already been played!'});
+        }
+
+        // 5. Fetch parent info
+        const [parentRows] = await pool.query(
+            'SELECT id, first_name, email FROM users WHERE id = ?',
+            [recording.parent_id]
+        );
+
+        if (parentRows.length === 0) {
+            return res.status(500).json({ error: 'Parent user not found for this recording' });
+        }
+
+        const parent = parentRows[0];
+
+        // 6. Fetch baby name
+        const [babyRows] = await pool.query(
+            'SELECT first_name FROM babies WHERE id = ?',
+            [recording.baby_id]
+        );
+        
+        const babyName = babyRows[0].first_name;
+
+        // SCHEDULE.
+        if (action === 'schedule') {
+            if(!scheduled_time) {
+                return res.status(400).json({error: 'Scheduling Time is required!'});
+            }
+
+            const scheduledDate = new Date(scheduled_time);
+            if (isNaN(scheduledDate.getTime())) {
+                return res.status(400).json({ error: 'Scheduling Time is not valid format!' });
+            }
+
+            if (scheduledDate <= new Date()) {
+                return res.status(400).json({ error: 'Scheduling Time must be in the future!' });
+            }
+
+            // Convert to MySQL-compatible format (YYYY-MM-DD HH:MM:SS)
+            const mysqlScheduledTime = scheduledDate.toISOString().slice(0, 19).replace('T', ' ');
+
+            const schedule_id = uuidv4();
+
+            // Cancel any existing pending schedule before creating a new one.
+            await pool.query(
+                `UPDATE schedules SET status = 'cancelled' WHERE recording_id = ? AND status = 'pending'`,
+                [recording_id]
+            );
+
+            // Now create the new one.
+            await pool.query(
+                `INSERT INTO schedules (id, recording_id, scheduled_by, scheduled_time, trigger_type, status, created_at)
+                VALUES (?, ?, ?, ?, 'scheduled', 'pending', NOW())`,
+                [schedule_id, recording_id, req.user.id, mysqlScheduledTime]
+            );
+
+            // Update recording status to scheduled.
+            await pool.query(
+                `UPDATE recordings
+                 SET status = 'scheduled', reviewed_at = NOW(), reviewed_by = ?
+                 WHERE id = ?`,
+                [req.user.id, recording_id]
+            );
+
+            // Write status history row
+            await pool.query(
+                `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by)
+                 VALUES (?, ?, 'scheduled', ?)`,
+                [recording_id, recording.status, req.user.id]
+            );  
+            
+
+            const [updated] = await pool.query(
+                'SELECT id, baby_id, parent_id, title, status, duration_seconds, uploaded_at, reviewed_at, reviewed_by FROM recordings WHERE id = ?',
+                [recording_id]
+            );
+
+            // Send SES email to the parent.
+            try {
+                if (recording.status === 'scheduled') {
+                    // Was already scheduled before — this is a reschedule
+                    await notifyParentRescheduled(
+                        parent.email,
+                        parent.first_name,
+                        babyName,
+                        recording.title,
+                        scheduled_time
+                    );
+                } else {
+                    // Fresh schedule from pending_review or rejected
+                    await notifyParentScheduled(
+                        parent.email,
+                        parent.first_name,
+                        babyName,
+                        recording.title,
+                        scheduled_time
+                    );
+                }
+            } catch(emailErr) {
+                console.error('SES email failed (schedule):', emailErr);
+                return res.status(200).json({
+                    message: 'Recording scheduled successfully but email notification failed!',
+                    recording: updated[0],
+                    schedule_id
+                });
+            }
+
+            return res.status(200).json({
+                message: 'Recording scheduled successfully',
+                recording: updated[0],
+                schedule_id
+            });
+        }
+
+        // REJECT.
+        if (action === 'reject') {
+            if (!note || note.trim() === '') {
+                return res.status(400).json({ error: 'note is required for reject action' });
+            }
+
+            // Cancel any pending schedule for this recording
+            await pool.query(
+                `UPDATE schedules SET status = 'cancelled' WHERE recording_id = ? AND status = 'pending'`,
+                [recording_id]
+            );
+
+            // Update recording status to rejected
+            await pool.query(
+                `UPDATE recordings
+                 SET status = 'rejected', reviewed_at = NOW(), reviewed_by = ?
+                 WHERE id = ?`,
+                [req.user.id, recording_id]
+            );
+
+            // Write status history row
+            await pool.query(
+                `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by, note)
+                 VALUES (?, ?, 'rejected', ?, ?)`,
+                [recording_id, recording.status, req.user.id, note.trim()]
+            );
+
+            const [updated] = await pool.query(
+                'SELECT id, baby_id, parent_id, title, status, duration_seconds, uploaded_at, reviewed_at, reviewed_by FROM recordings WHERE id = ?',
+                [recording_id]
+            );
+
+            // Send SES email to the parent.
+            try {
+                await notifyParentRejected(
+                    parent.email,
+                    parent.first_name,
+                    babyName,
+                    recording.title,
+                    note.trim()
+                );
+            } catch(emailErr) {
+                console.error('SES email failed (reject):', emailErr);
+                return res.status(200).json({
+                    message: 'Recording rejected but email notification failed!',
+                    recording: updated[0]
+                });
+            }
+
+            return res.status(200).json({
+                message: 'Recording rejected',
+                recording: updated[0]
+            });
+        }
+    } catch(err) {
+        console.error('PATCH /recordings/:id/review error:', err);
+        return res.status(500).json({ error: 'Internal server error!' });
+    }
 });
 
 module.exports = router;
