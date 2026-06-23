@@ -1,3 +1,5 @@
+// ses.js
+
 const {SESClient, SendEmailCommand} = require('@aws-sdk/client-ses');
 
 // Create SES client instance

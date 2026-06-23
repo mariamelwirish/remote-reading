@@ -1,3 +1,5 @@
+// babies.js
+
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
@@ -321,6 +323,15 @@ router.patch('/:id/discharge', authenticate, async(req, res) => {
         // 4. Return updated baby.
         const [updated] = await pool.query(
             'SELECT * FROM babies WHERE id = ?',
+            [id]
+        );
+
+        // Cancel all pending schedules for this baby's recordings
+        await pool.query(
+            `UPDATE schedules s
+            JOIN recordings r ON s.recording_id = r.id
+            SET s.status = 'cancelled'
+            WHERE r.baby_id = ? AND s.status = 'pending'`,
             [id]
         );
 
