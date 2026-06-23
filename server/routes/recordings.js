@@ -24,6 +24,8 @@ const authenticate = require('../middleware/auth'); // JWT middleware
 const {uploadAudio} = require('../utils/s3'); // s3 upload utility function
 const {notifyParentScheduled, notifyParentRescheduled, notifyParentRejected} = require('../utils/ses');
 const { v4: uuidv4 } = require('uuid');
+const requireRole = require('../middleware/requireRole');
+
 
 
 // Multer Configuration: store file in memory, validate MIME type, limit size to 50MB
@@ -41,12 +43,8 @@ const upload = multer({
 
 // POST /api/v1/recordings
 // Parents upload audio recordings for their children
-router.post('/', authenticate, upload.single('audio'), async (req, res) => { // using multer middleware to handle single file upload with field name 'audio'
+router.post('/', authenticate, requireRole('parent'), upload.single('audio'), async (req, res) => { // using multer middleware to handle single file upload with field name 'audio'
    try {
-        // 1. Check Role (only parents can upload)
-        if(req.user.role !== 'parent') {
-            return res.status(403).json({ error: 'Only parents can upload recordings!' });
-        }
 
         // 2. Check if file exists
         if (!req.file) {
@@ -112,13 +110,8 @@ router.post('/', authenticate, upload.single('audio'), async (req, res) => { // 
 
 // PATCH /api/v1/rercordings/:id/review
 // Nurse or Admin reviews a recording: schedule or reject.
-router.patch ('/:id/review', authenticate, async(req, res) => {
+router.patch ('/:id/review', authenticate, requireRole('admin', 'nurse'), async(req, res) => {
     try {
-        // 1. Role Check.
-        if(req.user.role !== 'nurse' && req.user.role !== 'admin') {
-            return res.status(403).json({error: 'Forbidden!'});
-        }
-
         const recording_id = req.params.id;
         const {action, scheduled_time, note} = req.body;
 

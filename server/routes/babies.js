@@ -6,6 +6,7 @@ const pool = require('../config/db');
 const authenticate = require('../middleware/auth');
 const {getPresignedUrl} = require('../utils/s3');
 const {v4: uuidv4} = require('uuid');
+const requireRole = require('../middleware/requireRole');
 
 
 // HELPERS
@@ -172,13 +173,9 @@ router.get('/:id', authenticate, async(req, res) => {
 
 // POST /api/v1/babies
 // ADMIN ONLY - create a new baby record
-router.post('/', authenticate, async(req, res) => {
+router.post('/', authenticate, requireRole('admin'), async(req, res) => {
     try {
         const user = req.user;
-        
-        if(user.role !== 'admin') {
-            return res.status(403).json({error: 'Forbidden'});
-        }
 
         if (!req.body || typeof req.body !== 'object') {
             return res.status(400).json({ error: 'Request body is required!' });
@@ -222,13 +219,9 @@ router.post('/', authenticate, async(req, res) => {
 
 // PATCH /babies/:id
 // ADMIN ONLY: Partial Baby Updates.
-router.patch('/:id', authenticate, async(req, res) => {
+router.patch('/:id', authenticate, requireRole('admin'), async(req, res) => {
     try {
         const user = req.user;
-
-        if(user.role !== 'admin') {
-            return res.status(403).json({error: 'Forbidden'});
-        }
 
         if (!req.body || typeof req.body !== 'object') {
             return res.status(400).json({ error: 'Request body is required!' });
@@ -287,12 +280,8 @@ router.patch('/:id', authenticate, async(req, res) => {
 
 // PATCH /babies/:id/discharge - Admin only. 
 // Soft-discharge a baby (not fully removed from the database, but becomes inactive).
-router.patch('/:id/discharge', authenticate, async(req, res) => {
+router.patch('/:id/discharge', authenticate, requireRole('admin'), async(req, res) => {
     const {id} = req.params;
-
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({error: 'Forbidden!'});
-    }
 
     try {
         // 1. Check baby exists.
@@ -370,13 +359,8 @@ router.patch('/:id/discharge', authenticate, async(req, res) => {
 
 // PATCH /babies/:id/readmit - Admin Only.
 // Undo Discharge.
-router.patch('/:id/readmit/', authenticate, async(req, res) => {
+router.patch('/:id/readmit/', authenticate, requireRole('admin'), async(req, res) => {
     const {id} = req.params;
-
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden' });
-    } 
-
     try {
         // 1. Check if baby exists.
         const [rows] = await pool.query(
