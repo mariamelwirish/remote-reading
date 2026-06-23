@@ -283,4 +283,98 @@ router.patch('/:id', authenticate, async(req, res) => {
     }
 });
 
+// PATCH /babies/:id/discharge - Admin only. 
+// Soft-discharge a baby (not fully removed from the database, but becomes inactive).
+router.patch('/:id/discharge', authenticate, async(req, res) => {
+    const {id} = req.params;
+
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({error: 'Forbidden!'});
+    }
+
+    try {
+        // 1. Check baby exists.
+        const [rows] = await pool.query(
+            'SELECT id, status FROM babies WHERE id = ?',
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({error: 'Baby not found!'});
+        }
+
+        // 2. Check baby is still active.
+        if(rows[0].status === 'discharged') {
+            return res.status(400).json({error: 'Baby is already discharged!'});
+        }
+
+        // 3. Discharge Baby.
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD (split on 'T' on "2026-06-21T14:30:00.000Z" and return the first part)
+
+        await pool.query(
+            `UPDATE babies
+            SET status = 'discharged', discharge_date = ?
+            WHERE id = ?`,
+            [today, id]
+        );
+
+        // 4. Return updated baby.
+        const [updated] = await pool.query(
+            'SELECT * FROM babies WHERE id = ?',
+            [id]
+        );
+
+        return res.status(200).json(updated[0]);
+    } catch(err) {
+        console.error('PATCH /babies/:id/discharge error:', err);
+        return res.status(500).json({error: 'Internal Sever Error!'});
+    }
+});
+
+// PATCH /babies/:id/readmit - Admin Only.
+// Undo Discharge.
+router.patch('/:id/readmit/', authenticate, async(req, res) => {
+    const {id} = req.params;
+
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden' });
+    } 
+
+    try {
+        // 1. Check if baby exists.
+        const [rows] = await pool.query(
+            'SELECT id, status FROM babies WHERE id = ?',
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Baby not found!' });
+        }
+
+        // 2. Check baby is actually discharged
+        if (rows[0].status === 'active') {
+            return res.status(400).json({ error: 'Baby is already active!' });
+        }
+
+        // 3. Readmit
+        await pool.query(
+            `UPDATE babies
+            SET status = 'active', discharge_date = NULL
+            WHERE id = ?`,
+            [id]
+        );
+
+        // 4. Return updated baby
+        const [updated] = await pool.query(
+            'SELECT * FROM babies WHERE id = ?',
+            [id]
+        );
+
+        return res.status(200).json(updated[0]);
+    } catch(err) {
+        console.error('PATCH /babies/:id/readmit error:', err);
+        return res.status(500).json({ error: 'Internal server error!' });
+    }
+});
+
 module.exports = router;
