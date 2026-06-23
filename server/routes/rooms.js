@@ -32,4 +32,38 @@ router.get('/', authenticate, requireRole('nurse', 'admin'), async(req, res) => 
     }
 });
 
+// GET /api/v1/rooms/:id/babies
+// All active babies in a given room (the core nurse dashboard query).
+router.get('/:id/babies', authenticate, requireRole('nurse', 'admin'), async (req, res) => {
+    const {id} = req.params;
+
+    try {
+        // Confirm the room exists and is active before returning babies
+        const [rooms] = await pool.query(
+            'SELECT id FROM rooms WHERE id = ? AND is_active = TRUE',
+            [id]
+        );
+
+        if (rooms.length === 0) {
+            return res.status(404).json({ error: 'Room not found!' });
+        }
+
+        const [babies] = await pool.query(
+            `SELECT b.id, b.first_name, b.last_name, b.date_of_birth, b.gender,
+                    b.admission_date, b.status,
+                    i.id AS incubator_id, i.incubator_code
+             FROM babies b
+             JOIN incubators i ON b.incubator_id = i.id
+             WHERE i.room_id = ? AND b.status = 'active'
+             ORDER BY b.created_at DESC`,
+            [id]
+        );
+        
+        return res.status(200).json(babies);
+    } catch(err) {
+        console.error('GET /rooms/:id/babies error:', err);
+        return res.status(500).json({ error: 'Failed to fetch babies for room' });
+    }
+});
+
 module.exports = router;
