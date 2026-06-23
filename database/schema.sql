@@ -73,7 +73,7 @@ CREATE TABLE recordings (
     description TEXT,
     s3_key VARCHAR(500) NOT NULL,
     duration_seconds INTEGER NOT NULL,
-    status ENUM('pending_review', 'scheduled', 'played', 'rejected') DEFAULT 'pending_review',
+    status ENUM('pending_review', 'scheduled', 'played', 'rejected', 'cancelled') DEFAULT 'pending_review',
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reviewed_at TIMESTAMP,
     reviewed_by CHAR(36),
@@ -87,11 +87,12 @@ CREATE TABLE recordings (
 -- Recording status history table
 -- Logs every status transition with who made it and when
 -- 'returned' removed from ENUM — nurse actions are now schedule, play now, or reject only
+-- 'cancelled' added — means baby was discharged, recording no longer actionable
 CREATE TABLE recording_status_history (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
-    from_status ENUM('pending_review', 'scheduled', 'played', 'rejected'),
-    to_status ENUM('pending_review', 'scheduled', 'played', 'rejected') NOT NULL,
+    from_status ENUM('pending_review', 'scheduled', 'played', 'rejected', 'cancelled'),
+    to_status ENUM('pending_review', 'scheduled', 'played', 'rejected', 'cancelled') NOT NULL,
     changed_by CHAR(36) NOT NULL,
     note TEXT,
     changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
