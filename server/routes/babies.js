@@ -311,7 +311,7 @@ router.patch('/:id/discharge', authenticate, async(req, res) => {
         }
 
         // 3. Discharge Baby.
-        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD (split on 'T' on "2026-06-21T14:30:00.000Z" and return the first part)
+        const today = new Date().toISOString().split('T')[0];
 
         await pool.query(
             `UPDATE babies
@@ -320,18 +320,44 @@ router.patch('/:id/discharge', authenticate, async(req, res) => {
             [today, id]
         );
 
-        // 4. Return updated baby.
-        const [updated] = await pool.query(
-            'SELECT * FROM babies WHERE id = ?',
-            [id]
-        );
-
-        // Cancel all pending schedules for this baby's recordings
+        // CONSEQUENCES
+        // 1. Cancel all pending schedules for this baby's recordings
         await pool.query(
             `UPDATE schedules s
             JOIN recordings r ON s.recording_id = r.id
             SET s.status = 'cancelled'
             WHERE r.baby_id = ? AND s.status = 'pending'`,
+            [id]
+        );
+
+        // 2. Fetch recordings that are about to be cancelled (to preserve from_status in history)
+        const [recordingsToCancel] = await pool.query(
+            `SELECT id, status FROM recordings
+            WHERE baby_id = ? AND status IN ('pending_review', 'scheduled')`,
+            [id]
+        );
+
+        // 3. Cancel those recordings
+        await pool.query(
+            `UPDATE recordings
+            SET status = 'cancelled'
+            WHERE baby_id = ? AND status IN ('pending_review', 'scheduled')`,
+            [id]
+        );
+
+        // 4. Write a history row for each cancelled recording
+        if (recordingsToCancel.length > 0) {
+            const historyValues = recordingsToCancel.map(r => [r.id, r.status, 'cancelled', req.user.id]);
+            await pool.query(
+                `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by)
+                VALUES ?`,
+                [historyValues]
+            );
+        }
+
+        // 4. Return updated baby — after all consequences are done
+        const [updated] = await pool.query(
+            'SELECT * FROM babies WHERE id = ?',
             [id]
         );
 
