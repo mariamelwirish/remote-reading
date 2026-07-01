@@ -16,39 +16,35 @@ CREATE TABLE users (
 );
 
 -- Rooms table
+-- capacity: data-driven occupancy limit. Admin sets it per room (most = 1, a few = 2).
+-- room_number is the ONLY identifier now — floor and wing both dropped (doctor meeting, June 2026).
 CREATE TABLE rooms (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     room_number VARCHAR(20) UNIQUE NOT NULL,
-    floor VARCHAR(20),
-    wing VARCHAR(20),
+    capacity INT NOT NULL DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Incubators table
-CREATE TABLE incubators (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
-    incubator_code VARCHAR(20) UNIQUE NOT NULL,
-    room_id CHAR(36) NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (room_id) REFERENCES rooms(id)
-);
+-- NOTE: incubators table removed entirely (doctor meeting, June 2026).
+-- Nurses swap incubators too often for babies.incubator_id to stay accurate,
+-- so babies are now assigned directly to rooms.
 
 -- Babies table
+-- room_id (FK -> rooms.id) replaces the old incubator_id.
 CREATE TABLE babies (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
     date_of_birth DATE NOT NULL,
     gender ENUM('male', 'female', 'other') NOT NULL,
-    incubator_id CHAR(36) NOT NULL,
+    room_id CHAR(36) NOT NULL,
     admission_date DATE NOT NULL,
     discharge_date DATE,
     status ENUM('active', 'discharged') DEFAULT 'active',
     created_by CHAR(36),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (incubator_id) REFERENCES incubators(id)
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
 );
 
 -- Parent-Baby junction table
@@ -85,9 +81,9 @@ CREATE TABLE recordings (
 );
 
 -- Recording status history table
--- Logs every status transition with who made it and when
--- 'returned' removed from ENUM — nurse actions are now schedule, play now, or reject only
--- 'cancelled' added — means baby was discharged, recording no longer actionable
+-- Logs every status transition with who made it and when.
+-- 'returned' removed from ENUM — nurse actions are schedule, play now, or reject only.
+-- 'cancelled' = baby discharged, recording no longer actionable.
 CREATE TABLE recording_status_history (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
@@ -102,7 +98,7 @@ CREATE TABLE recording_status_history (
 
 -- Schedules table
 -- One row per scheduling event. A recording can be scheduled multiple times.
--- node-cron only processes rows with status = 'pending'
+-- node-cron only processes rows with status = 'pending'.
 CREATE TABLE schedules (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
@@ -117,16 +113,17 @@ CREATE TABLE schedules (
 
 -- Playback log table
 -- Written after Pi confirms playback. Schedules = intentions. Playback log = reality.
+-- room_id replaces incubator_id (Phase 3 MQTT topics will be room-keyed).
 CREATE TABLE playback_log (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
-    incubator_id CHAR(36) NOT NULL,
+    room_id CHAR(36) NOT NULL,
     triggered_by CHAR(36),
     played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     duration_played_seconds INTEGER NOT NULL,
     trigger_source ENUM('scheduled', 'manual') NOT NULL,
     FOREIGN KEY (recording_id) REFERENCES recordings(id),
-    FOREIGN KEY (incubator_id) REFERENCES incubators(id)
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
 );
 
 -- Trigger: enforce maximum 2 parents per baby
