@@ -6,23 +6,30 @@ const authenticate = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const { v4: uuidv4 } = require('uuid');
 
-// GET /api/v1/rooms.
-// List all rooms with optional filter on active state.
+// GET /api/v1/rooms
+// List all rooms with live occupancy, optional filter on active state.
 router.get('/', authenticate, requireRole('nurse', 'admin'), async(req, res) => {
     const {active} = req.query;
 
-    const clauses = ['SELECT id, room_number, capacity, is_active FROM rooms'];
+    const clauses = [
+        `SELECT r.id, r.room_number, r.capacity, r.is_active,
+                COUNT(b.id) AS occupied
+         FROM rooms r
+         LEFT JOIN babies b
+                ON b.room_id = r.id AND b.status = 'active'`
+    ];
     const params = [];
 
     if(active !== undefined) {
         if(active !== 'true' && active !== 'false') {
             return res.status(400).json({ error: "Query param 'active' must be 'true' or 'false'" });
         }
-        clauses.push('WHERE is_active = ?');
+        clauses.push('WHERE r.is_active = ?');
         params.push(active === 'true');
     }
 
-    clauses.push('ORDER BY room_number ASC');
+    clauses.push('GROUP BY r.id, r.room_number, r.capacity, r.is_active');
+    clauses.push('ORDER BY r.room_number ASC');
     const sql = clauses.join(' ');
 
     try {
@@ -33,6 +40,30 @@ router.get('/', authenticate, requireRole('nurse', 'admin'), async(req, res) => 
         return res.status(500).json({ error: 'Failed to fetch rooms' });
     }
 });
+// GET /api/v1/rooms/available
+// List only active rooms that still have free capacity.
+// Feeds the reassignment UI so it never offers a full room.
+router.get('/available', authenticate, requireRole('nurse', 'admin'), async (req, res) => {
+    try {
+        const [rooms] = await pool.query(
+            `SELECT r.id, r.room_number, r.capacity,
+                    COUNT(b.id) AS occupied
+             FROM rooms r
+             LEFT JOIN babies b
+                    ON b.room_id = r.id AND b.status = 'active'
+             WHERE r.is_active = TRUE
+             GROUP BY r.id, r.room_number, r.capacity
+             HAVING occupied < r.capacity
+             ORDER BY r.room_number ASC`
+        );
+
+        return res.status(200).json(rooms);
+    } catch (err) {
+        console.error('GET /rooms/available error:', err);
+        return res.status(500).json({ error: 'Failed to fetch available rooms' });
+    }
+});
+
 
 
 // GET /api/v1/rooms/:id/babies

@@ -405,10 +405,18 @@ router.patch('/:id/discharge', authenticate, requireRole('admin'), async(req, re
     }
 });
 
-// PATCH /babies/:id/readmit - Admin Only.
-// Undo Discharge.
-router.patch('/:id/readmit', authenticate, requireRole('admin'), async(req, res) => {
+// PATCH /babies/:id/readmit - Admin + Nurse.
+// Undo discharge. Requires a room — readmission is a fresh placement,
+// so the target room must be chosen and validated (never silently reuse the old one).
+router.patch('/:id/readmit', authenticate, requireRole('admin', 'nurse'), async(req, res) => {
     const {id} = req.params;
+    const { room_id } = req.body;
+
+    // Validate input
+    if (!room_id || typeof room_id !== 'string' || room_id.trim() === '') {
+        return res.status(400).json({ error: 'room_id is required to readmit a baby!' });
+    }
+
     try {
         // 1. Check if baby exists.
         const [rows] = await pool.query(
@@ -425,15 +433,23 @@ router.patch('/:id/readmit', authenticate, requireRole('admin'), async(req, res)
             return res.status(400).json({ error: 'Baby is already active!' });
         }
 
-        // 3. Readmit
+        // 3. Validate the target room (exists, active, free capacity).
+        //    No excludeBabyId — the baby is currently discharged, so it isn't
+        //    counted in occupancy anyway; it must genuinely fit as a new arrival.
+        const roomError = await validateRoomAvailability(room_id);
+        if (roomError) {
+            return res.status(400).json({ error: roomError });
+        }
+
+        // 4. Readmit into the chosen room
         await pool.query(
             `UPDATE babies
-            SET status = 'active', discharge_date = NULL
+            SET status = 'active', discharge_date = NULL, room_id = ?
             WHERE id = ?`,
-            [id]
+            [room_id, id]
         );
 
-        // 4. Return updated baby
+        // 5. Return updated baby
         const [updated] = await pool.query(
             'SELECT * FROM babies WHERE id = ?',
             [id]
@@ -443,6 +459,64 @@ router.patch('/:id/readmit', authenticate, requireRole('admin'), async(req, res)
     } catch(err) {
         console.error('PATCH /babies/:id/readmit error:', err);
         return res.status(500).json({ error: 'Internal server error!' });
+    }
+});
+
+// PATCH /api/v1/babies/:id/reassign-room
+// Move a baby to a different room.
+// Admin + Nurse. Target room must exist, be active, and have free capacity.
+router.patch('/:id/reassign-room', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const babyId = req.params.id;
+    const { room_id } = req.body;
+
+    // Validate input
+    if (!room_id || typeof room_id !== 'string' || room_id.trim() === '') {
+        return res.status(400).json({ error: 'room_id is required!' });
+    }
+
+    try {
+        // 1. Confirm the baby exists and is active
+        const [babies] = await pool.query(
+            'SELECT id, status FROM babies WHERE id = ?',
+            [babyId]
+        );
+
+        if (babies.length === 0) {
+            return res.status(404).json({ error: 'Baby not found!' });
+        }
+
+        if (babies[0].status !== 'active') {
+            return res.status(400).json({ error: 'Cannot reassign a discharged baby!' });
+        }
+
+        // 2. Validate the target room (exists, active, free capacity) —
+        //    exclude this baby so re-submitting its current room isn't a false "full".
+        const roomError = await validateRoomAvailability(room_id, babyId);
+        if (roomError) {
+            return res.status(400).json({ error: roomError });
+        }
+
+        // 3. Move the baby
+        await pool.query(
+            'UPDATE babies SET room_id = ? WHERE id = ?',
+            [room_id, babyId]
+        );
+
+        // 4. Return the updated baby with its new room
+        const [updated] = await pool.query(
+            `SELECT b.id, b.first_name, b.last_name, b.status,
+                    r.id AS room_id, r.room_number
+             FROM babies b
+             JOIN rooms r ON b.room_id = r.id
+             WHERE b.id = ?`,
+            [babyId]
+        );
+
+        return res.status(200).json({ baby: updated[0] });
+
+    } catch (err) {
+        console.error('PATCH /babies/:id/reassign-room error:', err);
+        return res.status(500).json({ error: 'Internal Server Error!' });
     }
 });
 
