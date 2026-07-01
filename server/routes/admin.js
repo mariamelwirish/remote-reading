@@ -260,4 +260,68 @@ router.post('/parents', authenticate, requireRole('admin', 'nurse'), async (req,
     }
 });
 
+// POST /api/v1/admin/resend-invite
+// Re-issue an invite to a user who was provisioned but hasn't activated yet.
+// Overwrites the old token hash + expiry with fresh ones, re-sends the email.
+router.post('/resend-invite', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const { email } = req.body;
+
+    // 1. Validate
+    if (!email || !isValidEmail(email)) {
+        return res.status(400).json({ error: 'A valid email is required!' });
+    }
+    const trimmedEmail = email.trim().toLowerCase();
+
+    try {
+        // 2. Find the user
+        const [users] = await pool.query(
+            'SELECT id, first_name, role, invite_used FROM users WHERE email = ?',
+            [trimmedEmail]
+        );
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'No account found with that email!' });
+        }
+        const user = users[0];
+
+        // 3. Guard: only un-activated nurse/parent accounts can be re-invited
+        if (user.role === 'admin') {
+            return res.status(409).json({ error: 'Admin accounts are not invite-based.' });
+        }
+        if (user.invite_used === 1) {
+            return res.status(409).json({ error: 'This account is already activated. Nothing to resend.' });
+        }
+
+        // 4. Mint a fresh token + expiry, overwrite the old ones
+        const rawToken = generateRawToken();
+        const tokenHash = hashToken(rawToken);
+        const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000)
+            .toISOString().slice(0, 19).replace('T', ' ');
+
+        await pool.query(
+            `UPDATE users
+             SET invite_token = ?, invite_token_expires_at = ?, invite_used = FALSE
+             WHERE id = ?`,
+            [tokenHash, expiresAt, user.id]
+        );
+
+        // 5. Re-send (best-effort, same pattern as create)
+        try {
+            await notifyInvite(trimmedEmail, user.first_name, user.role, rawToken);
+        } catch (emailErr) {
+            console.error('SES resend-invite email failed:', emailErr);
+            return res.status(200).json({
+                message: 'Invite token refreshed, but the email failed to send. Try again.'
+            });
+        }
+
+        return res.status(200).json({
+            message: 'Invite email re-sent successfully.'
+        });
+
+    } catch (err) {
+        console.error('POST /admin/resend-invite error:', err);
+        return res.status(500).json({ error: 'Failed to resend invite!' });
+    }
+});
+
 module.exports = router;
