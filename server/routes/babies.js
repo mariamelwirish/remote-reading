@@ -10,47 +10,48 @@ const requireRole = require('../middleware/requireRole');
 
 
 // HELPERS
-// Validate Incubators
-async function validateIncubator(incubator_id, excludeBabyId = null) {
-    const [incubatorRows] = await pool.query(
-        'SELECT id, is_active FROM incubators WHERE id = ?',
-        [incubator_id]
+// Validate Room.
+async function validateRoomAvailability(room_id, excludeBabyId = null) {
+    const [roomRows] = await pool.query(
+        'SELECT id, capacity, is_active FROM rooms WHERE id = ?',
+        [room_id]
     );
-
-    if(incubatorRows.length === 0) {
-        return 'Incubator does not exist!';
+    
+    if (roomRows.length === 0) {
+        return 'Room does not exist!';
     }
 
-    if(incubatorRows[0].is_active !== 1) {
-        return 'Incubator is inactive!';
+    if (roomRows[0].is_active !== 1) {
+        return 'Room is inactive!';
     }
 
-    let query;
-    let params;
-    if(excludeBabyId) {
-        query = "SELECT id FROM babies WHERE incubator_id = ? AND status = 'active' AND id != ?";
-        params = [incubator_id, excludeBabyId];
-    } else {
-        query = "SELECT id FROM babies WHERE incubator_id = ? AND status = 'active'";
-        params = [incubator_id];
+    const room = roomRows[0];
+
+    let countQuery = "SELECT COUNT(*) AS occupied FROM babies WHERE room_id = ? AND status = 'active'";
+    const params = [room_id];
+
+    if (excludeBabyId) {
+        countQuery += ' AND id != ?';
+        params.push(excludeBabyId);
     }
 
-    const [occupiedRows] = await pool.query(query, params);
+    const [[{ occupied }]] = await pool.query(countQuery, params);
 
-    if (occupiedRows.length > 0) {
-        return 'This incubator is already occupied by another baby!';
+    if (occupied >= room.capacity) {
+        return 'Room is at full capacity!';
     }
 
     return null;
 }
 
+
 // Validate Details.
-function validateBabyFields({ first_name, last_name, date_of_birth, gender, incubator_id, admission_date }, requireAll = false) {
+function validateBabyFields({ first_name, last_name, date_of_birth, gender, room_id, admission_date }, requireAll = false) {
     const validGenders = ['male', 'female', 'other'];
 
     if (requireAll) {
-        if (!first_name || !last_name || !date_of_birth || !gender || !incubator_id || !admission_date) {
-            return 'All fields are required: First Name, Last Name, Date of Birth, Gender, Incubator ID, Admission Date!';
+        if (!first_name || !last_name || !date_of_birth || !gender || !room_id || !admission_date) {
+            return 'All fields are required: First Name, Last Name, Date of Birth, Gender, Room ID, Admission Date!';
         }
     }
 
@@ -65,9 +66,9 @@ function validateBabyFields({ first_name, last_name, date_of_birth, gender, incu
     return null;
 }
 
-// GET api/v1/babies/ (Admin Only).
+// GET api/v1/babies/ (Admin + Nurse).
 // Get all babies with optional active/discharged filter.
-router.get('/', authenticate, requireRole('admin'), async(req, res) => {
+router.get('/', authenticate, requireRole('admin', 'nurse'), async(req, res) => {
     const {status} = req.query;
 
     // 1. Validate status filter if provided
@@ -89,15 +90,10 @@ router.get('/', authenticate, requireRole('admin'), async(req, res) => {
                 b.discharge_date,
                 b.status,
                 b.created_at,
-                i.id AS incubator_id,
-                i.incubator_code,
                 r.id AS room_id,
-                r.room_number,
-                r.floor,
-                r.wing
+                r.room_number
             FROM babies b
-            LEFT JOIN incubators i ON b.incubator_id = i.id
-            LEFT JOIN rooms r ON i.room_id = r.id
+            LEFT JOIN rooms r ON b.room_id = r.id
         `;
 
         const params = [];
@@ -117,7 +113,6 @@ router.get('/', authenticate, requireRole('admin'), async(req, res) => {
         console.error('GET /babies error:', err);
         return res.status(500).json({ error: 'Internal server error!' });
     }
-
 });
 
 
@@ -204,13 +199,10 @@ router.get('/:id', authenticate, async(req, res) => {
                 b.admission_date,
                 b.discharge_date,
                 b.status,
-                i.incubator_code,
-                r.room_number,
-                r.floor,
-                r.wing
+                r.id AS room_id,
+                r.room_number
             FROM babies b
-            JOIN incubators i ON b.incubator_id = i.id
-            JOIN rooms r ON i.room_id = r.id
+            JOIN rooms r ON b.room_id = r.id
             WHERE b.id = ?`,
             [babyId]
         );
@@ -229,7 +221,7 @@ router.get('/:id', authenticate, async(req, res) => {
 
 // POST /api/v1/babies
 // ADMIN ONLY - create a new baby record
-router.post('/', authenticate, requireRole('admin'), async(req, res) => {
+router.post('/', authenticate, requireRole('admin', 'nurse'), async(req, res) => {
     try {
         const user = req.user;
 
@@ -237,16 +229,16 @@ router.post('/', authenticate, requireRole('admin'), async(req, res) => {
             return res.status(400).json({ error: 'Request body is required!' });
         }
 
-        const { first_name, last_name, date_of_birth, gender, incubator_id, admission_date } = req.body;
+        const { first_name, last_name, date_of_birth, gender, room_id, admission_date } = req.body;
 
         // Error on Fields.
-        const fieldError = validateBabyFields({ first_name, last_name, date_of_birth, gender, incubator_id, admission_date }, true);
+        const fieldError = validateBabyFields({ first_name, last_name, date_of_birth, gender, room_id, admission_date }, true);
         if (fieldError) return res.status(400).json({ error: fieldError });
 
-        // Error on incubators.
-        const incubatorError = await validateIncubator(incubator_id);
-        if (incubatorError) {
-            return res.status(400).json({ error: incubatorError });
+        // Error on Room.
+        const roomError = await validateRoomAvailability(room_id);
+        if (roomError) {
+            return res.status(400).json({ error: roomError });
         }
 
         
@@ -254,10 +246,10 @@ router.post('/', authenticate, requireRole('admin'), async(req, res) => {
         const babyId = uuidv4();
 
         await pool.query(
-            `INSERT INTO babies (id, first_name, last_name, date_of_birth, gender, incubator_id, admission_date, status, created_by, created_at)
+            `INSERT INTO babies (id, first_name, last_name, date_of_birth, gender, room_id, admission_date, status, created_by, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW())
             `,
-            [babyId, first_name, last_name, date_of_birth, gender, incubator_id, admission_date, user.id]
+            [babyId, first_name, last_name, date_of_birth, gender, room_id, admission_date, user.id]
         );
 
         const [newBaby] = await pool.query(
@@ -274,8 +266,8 @@ router.post('/', authenticate, requireRole('admin'), async(req, res) => {
 });
 
 // PATCH /babies/:id
-// ADMIN ONLY: Partial Baby Updates.
-router.patch('/:id', authenticate, requireRole('admin'), async(req, res) => {
+// Partial Baby Updates.
+router.patch('/:id', authenticate, requireRole('admin', 'nurse'), async(req, res) => {
     try {
         const user = req.user;
 
@@ -284,16 +276,16 @@ router.patch('/:id', authenticate, requireRole('admin'), async(req, res) => {
         }
 
         const babyId = req.params.id;
-        const { first_name, last_name, date_of_birth, gender, incubator_id } = req.body;
-        
-        // Validate Fields 
-        const fieldError = validateBabyFields({ first_name, last_name, date_of_birth, gender});
+        const { first_name, last_name, date_of_birth, gender, room_id } = req.body;
+
+        // Validate Fields
+        const fieldError = validateBabyFields({ first_name, last_name, date_of_birth, gender });
         if (fieldError) return res.status(400).json({ error: fieldError });
 
-        // Validate incubator only if it was sent
-        if (incubator_id !== undefined) {
-            const incubatorError = await validateIncubator(incubator_id, babyId);
-            if (incubatorError) return res.status(400).json({ error: incubatorError });
+        // Validate room only if it was sent
+        if (room_id !== undefined) {
+            const roomError = await validateRoomAvailability(room_id, babyId);
+            if (roomError) return res.status(400).json({ error: roomError });
         }
 
         // Build the UPDATE query dynamically
@@ -304,7 +296,7 @@ router.patch('/:id', authenticate, requireRole('admin'), async(req, res) => {
         if (last_name !== undefined)     { fields.push('last_name = ?');     values.push(last_name);     }
         if (date_of_birth !== undefined) { fields.push('date_of_birth = ?'); values.push(date_of_birth); }
         if (gender !== undefined)        { fields.push('gender = ?');        values.push(gender);        }
-        if (incubator_id !== undefined)  { fields.push('incubator_id = ?');  values.push(incubator_id);  }
+        if (room_id !== undefined)       { fields.push('room_id = ?');       values.push(room_id);       }
 
         if (fields.length === 0) {
             return res.status(400).json({ error: 'No valid fields provided for update!' });
