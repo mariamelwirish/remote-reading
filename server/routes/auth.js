@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { hashToken } = require('../utils/tokens');
 
 // POST /api/v1/auth/login
 router.post('/login', async (req, res) => {
@@ -82,11 +83,15 @@ router.post('/signup', async(req, res) => {
             return res.status(400).json({error: 'Password must be at least 8 characters.'});
         }
 
-        // Find user by invite token.
-        // FOR ME: Three conditions must all be true -> token exists, token has not been used, token is not expired.
+        // Hash the incoming raw token to match against the stored hash.
+        // DB holds the hash, so we hash BEFORE looking up.
+        const tokenHash = hashToken(token);
+
+        // Find user by invite token (hash-vs-hash).
+        // Three conditions must all be true -> token exists, not used, not expired.
         const [rows] = await pool.query(
             'SELECT * FROM users WHERE invite_token = ? AND invite_used = FALSE AND invite_token_expires_at > NOW()',
-            [token]
+            [tokenHash]
         );
 
         if(rows.length === 0) {
@@ -96,24 +101,21 @@ router.post('/signup', async(req, res) => {
         const user = rows[0];
 
         // Hash password.
-        const password_hash = await bcrypt.hash(password, 12); // Hashes password with cost factor of 12.
+        const password_hash = await bcrypt.hash(password, 12); // cost factor 12.
 
-        // Activate Account: stores hashed password, marks token as used, clear the token.
+        // Activate Account: store hashed password, mark token used, clear the stored hash.
         await pool.query(
             'UPDATE users SET password_hash = ?, invite_used = TRUE, invite_token = NULL WHERE id = ?',
             [password_hash, user.id]
         );
 
-
         res.status(200).json({ message: 'Account activated successfully. You can now log in.' });
-
 
     } catch (err) {
         console.error('Signup error:', err);
         res.status(500).json({ error: 'Internal server error.' });
     }
 });
-
 
 
 module.exports = router;

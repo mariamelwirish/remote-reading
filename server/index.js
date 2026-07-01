@@ -5,7 +5,7 @@ const authRoutes = require('./routes/auth'); // Imports the auth authorization r
 const recordingsRoutes = require('./routes/recordings'); // Imports the recordings routes defined in recordings.js
 const babiesRoutes = require('./routes/babies'); // Imports the baby recordings routes defined in babies.js
 const roomsRoutes = require('./routes/rooms'); // Imports the rooms routes defined in rooms.js
-
+const adminRoutes = require('./routes/admin'); // Imports the admin routes defined in admin.js
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,6 +17,7 @@ app.use('/api/v1/auth', authRoutes); // Mounts the auth routes at /api/v1/auth.
 app.use('/api/v1/recordings', recordingsRoutes); // Mounts the recordings routes at /api/v1/recordings.
 app.use('/api/v1/babies', babiesRoutes); // Mounts the baby recordings routes at /api/v1/babies.
 app.use('/api/v1/rooms', roomsRoutes); // Mounts the rooms routes at /api/v1/rooms.
+app.use('/api/v1/admin', adminRoutes); // Mounts the admin routes at /api/v1/admin.
 
 // Health check route
 app.get('/', (req, res) => {
