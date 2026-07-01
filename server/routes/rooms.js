@@ -123,11 +123,19 @@ router.post('/', authenticate, requireRole('admin', 'nurse'), async (req, res) =
         // Guard against duplicate room_number (schema enforces UNIQUE, but we check
         // first to return a clean 409 instead of a raw DB error).
         const [existing] = await pool.query(
-            'SELECT id FROM rooms WHERE room_number = ?',
+            'SELECT id, is_active FROM rooms WHERE room_number = ?',
             [trimmedRoomNumber]
         );
 
         if (existing.length > 0) {
+            const room = existing[0];
+            if (room.is_active === 0) {
+                return res.status(409).json({
+                    error: `Room ${trimmedRoomNumber} already exists but is deactivated. Reactivate it instead of creating a new one.`,
+                    room_id: room.id,
+                    is_active: false
+                });
+            }
             return res.status(409).json({ error: 'A room with that number already exists!' });
         }
 
@@ -151,5 +159,190 @@ router.post('/', authenticate, requireRole('admin', 'nurse'), async (req, res) =
     }
 });
 
+// PATCH /api/v1/rooms/:id
+// Edit a room's number and/or capacity (Admin + Nurse).
+router.patch('/:id', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const { id } = req.params;
+    const { room_number, capacity } = req.body;
+
+    // At least one editable field must be present
+    if (room_number === undefined && capacity === undefined) {
+        return res.status(400).json({ error: 'Provide room_number and/or capacity to update!' });
+    }
+
+    // Validate room_number if sent
+    let trimmedRoomNumber;
+    if (room_number !== undefined) {
+        if (typeof room_number !== 'string' || room_number.trim() === '') {
+            return res.status(400).json({ error: 'Room Number must be a non-empty string!' });
+        }
+        trimmedRoomNumber = room_number.trim();
+    }
+
+    
+
+    // Validate capacity if sent
+    if (capacity !== undefined && (!Number.isInteger(capacity) || capacity < 1)) {
+        return res.status(400).json({ error: 'Capacity must be a positive integer!' });
+    }
+
+    try {
+        // 1. Confirm the room exists
+        const [rooms] = await pool.query(
+            'SELECT id, capacity FROM rooms WHERE id = ?',
+            [id]
+        );
+
+        if (rooms.length === 0) {
+            return res.status(404).json({ error: 'Room not found!' });
+        }
+
+        // 2. If shrinking capacity, ensure it doesn't drop below current occupancy
+        if (capacity !== undefined) {
+            const [[{ occupied }]] = await pool.query(
+                "SELECT COUNT(*) AS occupied FROM babies WHERE room_id = ? AND status = 'active'",
+                [id]
+            );
+
+            if (capacity < occupied) {
+                return res.status(400).json({
+                    error: `Cannot set capacity to ${capacity}: room currently has ${occupied} active ${occupied === 1 ? 'baby' : 'babies'}.`
+                });
+            }
+        }
+
+        // 3. Guard against duplicate room_number if it's being changed
+        //    (surfaces the deactivated case with an actionable message)
+        if (trimmedRoomNumber !== undefined) {
+            const [existing] = await pool.query(
+                'SELECT id, is_active FROM rooms WHERE room_number = ? AND id != ?',
+                [trimmedRoomNumber, id]
+            );
+
+            if (existing.length > 0) {
+                const room = existing[0];
+                if (room.is_active !== 1) {
+                    return res.status(409).json({
+                        error: `Room ${trimmedRoomNumber} already exists but is deactivated. Reactivate it instead of renaming into its number.`,
+                        room_id: room.id,
+                        is_active: false
+                    });
+                }
+                return res.status(409).json({ error: 'A room with that number already exists!' });
+            }
+        }
+        
+        // 4. Build the dynamic UPDATE
+        const fields = [];
+        const values = [];
+
+        if (trimmedRoomNumber !== undefined) { fields.push('room_number = ?'); values.push(trimmedRoomNumber); }
+        if (capacity !== undefined)          { fields.push('capacity = ?');    values.push(capacity);          }
+
+        values.push(id);
+
+        await pool.query(
+            `UPDATE rooms SET ${fields.join(', ')} WHERE id = ?`,
+            values
+        );
+
+        // 5. Return the updated room
+        const [updated] = await pool.query(
+            'SELECT id, room_number, capacity, is_active FROM rooms WHERE id = ?',
+            [id]
+        );
+
+        return res.status(200).json(updated[0]);
+
+    } catch (err) {
+        console.error('PATCH /rooms/:id error:', err);
+        return res.status(500).json({ error: 'Failed to update room!' });
+    }
+});
+
+// PATCH /api/v1/rooms/:id/deactivate
+// Soft-deactivate a room (Admin + Nurse). Blocked if active babies are present.
+router.patch('/:id/deactivate', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        // 1. Confirm the room exists
+        const [rooms] = await pool.query(
+            'SELECT id, is_active FROM rooms WHERE id = ?',
+            [id]
+        );
+
+        if (rooms.length === 0) {
+            return res.status(404).json({ error: 'Room not found!' });
+        }
+
+        // 2. Guard: already inactive
+        if (rooms[0].is_active !== 1) {
+            return res.status(400).json({ error: 'Room is already inactive!' });
+        }
+
+        // 3. Guard: block if active babies are still in the room
+        const [babies] = await pool.query(
+            `SELECT id, first_name, last_name
+             FROM babies
+             WHERE room_id = ? AND status = 'active'`,
+            [id]
+        );
+
+        if (babies.length > 0) {
+            return res.status(409).json({
+                error: 'Cannot deactivate a room that still has active babies. Reassign or discharge them first.',
+                babies
+            });
+        }
+
+        // 4. Deactivate
+        await pool.query(
+            'UPDATE rooms SET is_active = FALSE WHERE id = ?',
+            [id]
+        );
+
+        return res.status(200).json({ id, is_active: false });
+
+    } catch (err) {
+        console.error('PATCH /rooms/:id/deactivate error:', err);
+        return res.status(500).json({ error: 'Failed to deactivate room!' });
+    }
+});
+
+// PATCH /api/v1/rooms/:id/reactivate
+// Restore a deactivated room (Admin + Nurse).
+router.patch('/:id/reactivate', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        // 1. Confirm the room exists
+        const [rooms] = await pool.query(
+            'SELECT id, is_active FROM rooms WHERE id = ?',
+            [id]
+        );
+
+        if (rooms.length === 0) {
+            return res.status(404).json({ error: 'Room not found!' });
+        }
+
+        // 2. Guard: already active
+        if (rooms[0].is_active === 1) {
+            return res.status(400).json({ error: 'Room is already active!' });
+        }
+
+        // 3. Reactivate
+        await pool.query(
+            'UPDATE rooms SET is_active = TRUE WHERE id = ?',
+            [id]
+        );
+
+        return res.status(200).json({ id, is_active: true });
+
+    } catch (err) {
+        console.error('PATCH /rooms/:id/reactivate error:', err);
+        return res.status(500).json({ error: 'Failed to reactivate room!' });
+    }
+});
 
 module.exports = router;
