@@ -7,7 +7,7 @@ const authenticate = require('../middleware/auth');
 const {getPresignedUrl} = require('../utils/s3');
 const {v4: uuidv4} = require('uuid');
 const requireRole = require('../middleware/requireRole');
-
+const { generateSequentialId } = require('../utils/ids');
 
 // HELPERS
 // Validate Room.
@@ -67,17 +67,18 @@ function validateBabyFields({ first_name, last_name, date_of_birth, gender, room
 }
 
 // GET api/v1/babies/
-// Admin + Nurse: all babies with optional ?status filter.
+// Admin + Nurse: all babies with optional ?status filter and ?search (matches record_number).
 // Parent: only babies linked to them via parent_baby.
 router.get('/', authenticate, async(req, res) => {
     const { role, id: userId } = req.user;
 
-    // Parents get their own linked babies — no status filter needed
+    // Parents get their own linked babies — no status/search filter needed
     if (role === 'parent') {
         try {
             const [rows] = await pool.query(
                 `SELECT
                     b.id,
+                    b.record_number,
                     b.first_name,
                     b.last_name,
                     b.date_of_birth,
@@ -103,12 +104,12 @@ router.get('/', authenticate, async(req, res) => {
         }
     }
 
-    // Admin + Nurse: full list with optional status filter
+    // Admin + Nurse: full list with optional status filter and record_number search
     if (role !== 'admin' && role !== 'nurse') {
         return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const {status} = req.query;
+    const { status, search } = req.query;
 
     const allowedStatuses = ['active', 'discharged'];
     if (status && !allowedStatuses.includes(status)) {
@@ -119,6 +120,7 @@ router.get('/', authenticate, async(req, res) => {
         let query = `
             SELECT
                 b.id,
+                b.record_number,
                 b.first_name,
                 b.last_name,
                 b.date_of_birth,
@@ -133,11 +135,21 @@ router.get('/', authenticate, async(req, res) => {
             LEFT JOIN rooms r ON b.room_id = r.id
         `;
 
+        const conditions = [];
         const params = [];
 
         if (status) {
-            query += ' WHERE b.status = ?';
+            conditions.push('b.status = ?');
             params.push(status);
+        }
+
+        if (search) {
+            conditions.push('b.record_number LIKE ?');
+            params.push(`%${search.trim()}%`);
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
         }
 
         query += ' ORDER BY b.created_at DESC';
@@ -231,6 +243,7 @@ router.get('/:id', authenticate, async(req, res) => {
         const [rows] = await pool.query(
             `SELECT
                 b.id,
+                b.record_number,
                 b.first_name,
                 b.last_name,
                 b.date_of_birth,
@@ -283,12 +296,13 @@ router.post('/', authenticate, requireRole('admin', 'nurse'), async(req, res) =>
         
 
         const babyId = uuidv4();
+        const record_number = await generateSequentialId('babies', 'record_number', 'B');
 
         await pool.query(
-            `INSERT INTO babies (id, first_name, last_name, date_of_birth, gender, room_id, admission_date, status, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW())
+            `INSERT INTO babies (id, record_number, first_name, last_name, date_of_birth, gender, room_id, admission_date, status, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW())
             `,
-            [babyId, first_name, last_name, date_of_birth, gender, room_id, admission_date, user.id]
+            [babyId, record_number, first_name, last_name, date_of_birth, gender, room_id, admission_date, user.id]
         );
 
         const [newBaby] = await pool.query(
@@ -552,7 +566,7 @@ router.patch('/:id/reassign-room', authenticate, requireRole('admin', 'nurse'), 
 
         // 4. Return the updated baby with its new room
         const [updated] = await pool.query(
-            `SELECT b.id, b.first_name, b.last_name, b.status,
+            `SELECT b.id, b.record_number, b.first_name, b.last_name, b.status,
                     r.id AS room_id, r.room_number
              FROM babies b
              JOIN rooms r ON b.room_id = r.id

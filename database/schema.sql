@@ -34,6 +34,7 @@ CREATE TABLE rooms (
 -- room_id (FK -> rooms.id) replaces the old incubator_id.
 CREATE TABLE babies (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    record_number VARCHAR(20) UNIQUE NOT NULL,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
     date_of_birth DATE NOT NULL,
