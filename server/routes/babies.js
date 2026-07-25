@@ -66,19 +66,56 @@ function validateBabyFields({ first_name, last_name, date_of_birth, gender, room
     return null;
 }
 
-// GET api/v1/babies/ (Admin + Nurse).
-// Get all babies with optional active/discharged filter.
-router.get('/', authenticate, requireRole('admin', 'nurse'), async(req, res) => {
+// GET api/v1/babies/
+// Admin + Nurse: all babies with optional ?status filter.
+// Parent: only babies linked to them via parent_baby.
+router.get('/', authenticate, async(req, res) => {
+    const { role, id: userId } = req.user;
+
+    // Parents get their own linked babies — no status filter needed
+    if (role === 'parent') {
+        try {
+            const [rows] = await pool.query(
+                `SELECT
+                    b.id,
+                    b.first_name,
+                    b.last_name,
+                    b.date_of_birth,
+                    b.gender,
+                    b.admission_date,
+                    b.discharge_date,
+                    b.status,
+                    b.created_at,
+                    r.id AS room_id,
+                    r.room_number,
+                    pb.relationship
+                FROM babies b
+                JOIN parent_baby pb ON pb.baby_id = b.id
+                LEFT JOIN rooms r ON b.room_id = r.id
+                WHERE pb.parent_id = ?
+                ORDER BY b.created_at DESC`,
+                [userId]
+            );
+            return res.status(200).json(rows);
+        } catch (err) {
+            console.error('GET /babies (parent) error:', err);
+            return res.status(500).json({ error: 'Internal server error!' });
+        }
+    }
+
+    // Admin + Nurse: full list with optional status filter
+    if (role !== 'admin' && role !== 'nurse') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const {status} = req.query;
 
-    // 1. Validate status filter if provided
     const allowedStatuses = ['active', 'discharged'];
     if (status && !allowedStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status filter. Use active or discharged!' });
     }
 
     try {
-        // 2. Build query dynamically based on whether ?status was passed
         let query = `
             SELECT
                 b.id,
@@ -105,7 +142,6 @@ router.get('/', authenticate, requireRole('admin', 'nurse'), async(req, res) => 
 
         query += ' ORDER BY b.created_at DESC';
 
-        // 3. Run query
         const [rows] = await pool.query(query, params);
 
         return res.status(200).json(rows);
@@ -123,10 +159,13 @@ router.get('/:id/recordings', authenticate, async (req, res) => {
         const {id: baby_id} = req.params;
         const {id: user_id, role} = req.user;
 
-        let query = `SELECT id, title, description, status, duration_seconds, 
-                        s3_key, uploaded_at, reviewed_at
-                    FROM recordings
-                    WHERE baby_id = ?`;
+        let query = `SELECT r.id, r.title, r.description, r.status, r.duration_seconds,
+                        r.s3_key, r.uploaded_at, r.reviewed_at,
+                        s.scheduled_time
+                    FROM recordings r
+                    LEFT JOIN schedules s
+                        ON s.recording_id = r.id AND s.status = 'pending'
+                    WHERE r.baby_id = ?`;
         const queryParams = [baby_id]; // fills the '?' places.
 
         if (role === 'parent') {
@@ -142,11 +181,11 @@ router.get('/:id/recordings', authenticate, async (req, res) => {
 
             // The parent only sees their own recordings
 
-            query += ' AND parent_id = ?'
+            query += ' AND r.parent_id = ?'
             queryParams.push(user_id);
         }
         
-        query += ' ORDER BY uploaded_at DESC';
+        query += ' ORDER BY r.uploaded_at DESC';
 
         const [recordings] = await pool.query(query, queryParams);
 
@@ -326,82 +365,91 @@ router.patch('/:id', authenticate, requireRole('admin', 'nurse'), async(req, res
     }
 });
 
-// PATCH /babies/:id/discharge - Admin only. 
-// Soft-discharge a baby (not fully removed from the database, but becomes inactive).
-router.patch('/:id/discharge', authenticate, requireRole('admin'), async(req, res) => {
-    const {id} = req.params;
+// PATCH /babies/:id/discharge - Admin + Nurse.
+// Soft-discharge a baby. Multi-write, so wrapped in a transaction:
+// baby + its schedules + its recordings + history all move together or not at all.
+router.patch('/:id/discharge', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const { id } = req.params;
+
+    const connection = await pool.getConnection();
 
     try {
-        // 1. Check baby exists.
-        const [rows] = await pool.query(
+        // 1. Guard reads (cheap validation before we open the transaction)
+        const [rows] = await connection.query(
             'SELECT id, status FROM babies WHERE id = ?',
             [id]
         );
 
         if (rows.length === 0) {
-            return res.status(404).json({error: 'Baby not found!'});
+            return res.status(404).json({ error: 'Baby not found!' });
         }
 
-        // 2. Check baby is still active.
-        if(rows[0].status === 'discharged') {
-            return res.status(400).json({error: 'Baby is already discharged!'});
+        if (rows[0].status === 'discharged') {
+            return res.status(400).json({ error: 'Baby is already discharged!' });
         }
 
-        // 3. Discharge Baby.
+        // 2. Open the transaction — every write below is now all-or-nothing
+        await connection.beginTransaction();
+
+        // 3. Discharge the baby
         const today = new Date().toISOString().split('T')[0];
-
-        await pool.query(
+        await connection.query(
             `UPDATE babies
-            SET status = 'discharged', discharge_date = ?
-            WHERE id = ?`,
+             SET status = 'discharged', discharge_date = ?
+             WHERE id = ?`,
             [today, id]
         );
 
-        // CONSEQUENCES
-        // 1. Cancel all pending schedules for this baby's recordings
-        await pool.query(
+        // 4. Cancel all pending schedules for this baby's recordings
+        await connection.query(
             `UPDATE schedules s
-            JOIN recordings r ON s.recording_id = r.id
-            SET s.status = 'cancelled'
-            WHERE r.baby_id = ? AND s.status = 'pending'`,
+             JOIN recordings r ON s.recording_id = r.id
+             SET s.status = 'cancelled'
+             WHERE r.baby_id = ? AND s.status = 'pending'`,
             [id]
         );
 
-        // 2. Fetch recordings that are about to be cancelled (to preserve from_status in history)
-        const [recordingsToCancel] = await pool.query(
+        // 5. Fetch recordings about to be cancelled (need current status for history)
+        const [recordingsToCancel] = await connection.query(
             `SELECT id, status FROM recordings
-            WHERE baby_id = ? AND status IN ('pending_review', 'scheduled')`,
+             WHERE baby_id = ? AND status IN ('pending_review', 'scheduled')`,
             [id]
         );
 
-        // 3. Cancel those recordings
-        await pool.query(
+        // 6. Cancel those recordings
+        await connection.query(
             `UPDATE recordings
-            SET status = 'cancelled'
-            WHERE baby_id = ? AND status IN ('pending_review', 'scheduled')`,
+             SET status = 'cancelled'
+             WHERE baby_id = ? AND status IN ('pending_review', 'scheduled')`,
             [id]
         );
 
-        // 4. Write a history row for each cancelled recording
+        // 7. Write one history row per cancelled recording
         if (recordingsToCancel.length > 0) {
             const historyValues = recordingsToCancel.map(r => [r.id, r.status, 'cancelled', req.user.id]);
-            await pool.query(
+            await connection.query(
                 `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by)
-                VALUES ?`,
+                 VALUES ?`,
                 [historyValues]
             );
         }
 
-        // 4. Return updated baby — after all consequences are done
-        const [updated] = await pool.query(
+        // 8. All writes succeeded — commit as one unit
+        await connection.commit();
+
+        // 9. Read back the updated baby (post-commit, just a read)
+        const [updated] = await connection.query(
             'SELECT * FROM babies WHERE id = ?',
             [id]
         );
 
         return res.status(200).json(updated[0]);
-    } catch(err) {
+    } catch (err) {
+        await connection.rollback();
         console.error('PATCH /babies/:id/discharge error:', err);
-        return res.status(500).json({error: 'Internal Sever Error!'});
+        return res.status(500).json({ error: 'Internal Server Error!' });
+    } finally {
+        connection.release();
     }
 });
 
