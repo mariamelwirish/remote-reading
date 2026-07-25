@@ -70,9 +70,21 @@ const notifyParentRejected = (parentEmail, parentName, babyName, recordingTitle,
     );
 };
 
+// Notify a newly-provisioned nurse or parent with their account-activation link.
+// role: 'nurse' | 'parent'. rawToken is the plaintext invite token (never the hash).
+const notifyInvite = (email, firstName, role, rawToken) => {
+    const signupUrl = `${process.env.FRONTEND_URL}/signup?token=${rawToken}`;
+    return sendEmail(
+        email,
+        'You\'ve been invited to Remote Reading for Newborns',
+        `Dear ${firstName},\n\nAn account has been created for you as a ${role} on Remote Reading for Newborns. Please activate your account and set your password using the link below within 48 hours:\n\n${signupUrl}\n\nIf you did not expect this invitation, please contact your hospital administrator.\n\nBest regards,\nRemote Reading Team`
+    );
+};
+
 module.exports = {
     notifyParentScheduled,
     notifyParentRescheduled,
     notifyParentPlayed,
-    notifyParentRejected
+    notifyParentRejected,
+    notifyInvite
 };
