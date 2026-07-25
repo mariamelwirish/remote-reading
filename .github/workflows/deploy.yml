@@ -29,3 +29,5 @@ jobs:
             cd ../client
             npm ci
             npm run build
+            rm -rf /var/www/remote-reading/dist
+            cp -r dist /var/www/remote-reading/dist
