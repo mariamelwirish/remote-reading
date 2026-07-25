@@ -26,3 +26,6 @@ jobs:
             npm install --production
             pm2 restart remote-reading-server || pm2 start index.js --name remote-reading-server
             pm2 save
+            cd ../client
+            npm ci
+            npm run build
