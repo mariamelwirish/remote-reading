@@ -83,11 +83,15 @@ router.get('/:id/babies', authenticate, requireRole('nurse', 'admin'), async (re
         }
 
         const [babies] = await pool.query(
-            `SELECT id, first_name, last_name, date_of_birth, gender,
-                    admission_date, status
-             FROM babies
-             WHERE room_id = ? AND status = 'active'
-             ORDER BY created_at DESC`,
+            `SELECT b.id, b.first_name, b.last_name, b.date_of_birth, b.gender,
+                    b.admission_date, b.status,
+                    SUM(CASE WHEN r.status = 'pending_review' THEN 1 ELSE 0 END) AS pending_review_count,
+                    SUM(CASE WHEN r.status = 'scheduled'      THEN 1 ELSE 0 END) AS scheduled_count
+             FROM babies b
+             LEFT JOIN recordings r ON r.baby_id = b.id
+             WHERE b.room_id = ? AND b.status = 'active'
+             GROUP BY b.id, b.first_name, b.last_name, b.date_of_birth, b.gender, b.admission_date, b.status
+             ORDER BY b.created_at DESC`,
             [id]
         );
 

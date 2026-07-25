@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const pool = require('./config/db');
 const authRoutes = require('./routes/auth'); // Imports the auth authorization routes defined in auth.js
 const recordingsRoutes = require('./routes/recordings'); // Imports the recordings routes defined in recordings.js
@@ -10,8 +11,12 @@ const adminRoutes = require('./routes/admin'); // Imports the admin routes defin
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:5173'];
 
 // Middleware
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use('/api/v1/auth', authRoutes); // Mounts the auth routes at /api/v1/auth. 
 app.use('/api/v1/recordings', recordingsRoutes); // Mounts the recordings routes at /api/v1/recordings.
