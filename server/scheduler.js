@@ -70,7 +70,7 @@ async function triggerScheduledPlayback(schedule_id, recording_id) {
         }
 
         const [devices] = await connection.query(
-            'SELECT id, device_code FROM devices WHERE baby_id = ? AND is_active = TRUE',
+            'SELECT id, device_code, is_online FROM devices WHERE baby_id = ? AND is_active = TRUE',
             [recording.baby_id]
         );
 
@@ -85,6 +85,16 @@ async function triggerScheduledPlayback(schedule_id, recording_id) {
         }
 
         const device = devices[0];
+
+        if (!device.is_online) {
+            console.warn(
+                `Scheduler: device ${device.device_code} is offline, cannot play recording ${recording_id}. Leaving schedule pending for next run.`
+            );
+            // Same reasoning as "no device assigned" — this wasn't genuinely
+            // attempted, so the schedule stays 'pending' and will be retried
+            // next minute, in case the device reconnects by then.
+            return;
+        }
 
         // Presigned URL generated before the transaction — same reasoning
         // as everywhere else this pattern appears.
@@ -133,8 +143,8 @@ async function triggerScheduledPlayback(schedule_id, recording_id) {
         } catch (mqttErr) {
             console.error(`Scheduler: IoT publish failed for ${device.device_code}:`, mqttErr);
             // DB state is already committed and correct; the device just
-            // didn't receive it. This is exactly the gap the future
-            // "Pi offline recovery" check is meant to catch.
+            // didn't receive it. This is exactly the gap the "Pi offline
+            // recovery" sweep and Last Will and Testament are meant to catch.
         }
     } catch (err) {
         await connection.rollback();
@@ -147,8 +157,62 @@ async function triggerScheduledPlayback(schedule_id, recording_id) {
 function startScheduler() {
     cron.schedule('* * * * *', () => {
         processDueSchedules();
+        recoverStalePlaybacks();
     });
     console.log('Scheduler started — checking for due recordings every minute.');
+}
+
+// Runs alongside processDueSchedules() every minute. Catches recordings
+// that were sent to a device but never got any confirmation back at all —
+// the slow backstop for cases the fast paths (iotSubscriber.js message
+// handling, Last Will and Testament) can't catch, e.g. a broker-side issue
+// with the will message itself.
+async function recoverStalePlaybacks() {
+    const connection = await pool.getConnection();
+
+    try {
+        // Timeout is duration-aware: a recording needs at least its own
+        // length to genuinely finish playing, plus a fixed buffer for
+        // fetch time and network delay — not a flat window regardless
+        // of how long the audio actually is.
+        const BUFFER_SECONDS = 120;
+
+        const [staleRecordings] = await connection.query(
+            `SELECT r.id, r.duration_seconds, r.reviewed_at, r.reviewed_by
+             FROM recordings r
+             LEFT JOIN playback_log pl ON pl.recording_id = r.id AND pl.played_at >= r.reviewed_at
+             WHERE r.status = 'played'
+               AND pl.id IS NULL
+               AND r.reviewed_at IS NOT NULL
+               AND r.reviewed_at <= NOW() - INTERVAL (r.duration_seconds + ?) SECOND`,
+            [BUFFER_SECONDS]
+        );
+
+        if (staleRecordings.length === 0) {
+            return;
+        }
+
+        console.log(`Scheduler: ${staleRecordings.length} recording(s) never confirmed by their device, reverting.`);
+
+        for (const stale of staleRecordings) {
+            await connection.query(
+                `UPDATE recordings SET status = 'pending_review' WHERE id = ?`,
+                [stale.id]
+            );
+
+            await connection.query(
+                `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by, note)
+                 VALUES (?, 'played', 'pending_review', ?, 'No confirmation received from device within timeout window')`,
+                [stale.id, stale.reviewed_by]
+            );
+
+            console.warn(`Scheduler: recording ${stale.id} timed out waiting for device confirmation, reverted to pending_review.`);
+        }
+    } catch (err) {
+        console.error('Scheduler: error checking for stale playbacks:', err);
+    } finally {
+        connection.release();
+    }
 }
 
 module.exports = { startScheduler };

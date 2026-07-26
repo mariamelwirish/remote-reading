@@ -106,11 +106,16 @@ CREATE TABLE schedules (
 -- Devices table
 -- baby_id is nullable + UNIQUE — enforces one-to-one device-to-baby at the
 -- DB level. Room is derived via baby_id -> babies.room_id, not stored here.
+-- is_online: maintained live by iotSubscriber.js via MQTT connect/online
+-- messages and Last Will and Testament (offline) messages — checked by
+-- /play and the scheduler BEFORE publishing, so a known-offline device is
+-- rejected instantly instead of optimistically marking a recording played.
 CREATE TABLE devices (
     id CHAR(36) PRIMARY KEY,
     device_code VARCHAR(50) UNIQUE NOT NULL,
     baby_id CHAR(36) UNIQUE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_online BOOLEAN DEFAULT FALSE,
     last_seen_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (baby_id) REFERENCES babies(id)

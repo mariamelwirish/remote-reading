@@ -5,29 +5,20 @@
 // NOT a certificate like the Pi uses. Certificates are for physical
 // devices; IAM auth is the right fit for your own backend service.
 //
-// This is architecturally different from iot.js, which only ever does
-// one-off REST-style publishes. Subscribing requires a real, long-lived
-// connection, since MQTT is push-based — there's no "check for messages"
-// endpoint to poll.
-//
-// Recordings already flip to 'played' immediately when a play command is
-// sent (optimistic, in recordings.js / scheduler.js). This subscriber's
-// job is narrower: log real-time lifecycle events (started/played/stopped),
-// write a genuine playback_log row on confirmed success, and catch genuine
-// device failures by reverting a recording back to pending_review.
+// Handles two categories of message on the same topic filter:
+//   1. Device-level connection events (online/offline) — no recording_id,
+//      tied to MQTT connect/Last-Will-and-Testament, not any playback.
+//   2. Playback lifecycle events (started/played/stopped/fetch_failed) —
+//      tied to a specific recording_id.
 
 const { iot, mqtt5 } = require('aws-iot-device-sdk-v2');
 const pool = require('./config/db');
 
-const STATUS_TOPIC_FILTER = 'devices/+/status'; // '+' = single-level wildcard
+const STATUS_TOPIC_FILTER = 'devices/+/status';
 
 let client = null;
 
 function buildClient() {
-    // Builds a WebSocket connection signed with the backend's own AWS
-    // credentials (same credential chain iot.js and s3.js already use —
-    // env vars locally, EC2 instance role in production). No certificate
-    // files needed here, unlike the Pi.
     const wsConfig = iot.AwsIotMqtt5ClientConfigBuilder.newWebsocketMqttBuilderWithSigv4Auth(
         process.env.AWS_IOT_ENDPOINT,
         {
@@ -47,14 +38,80 @@ async function handleStatusMessage(topic, payloadBuffer) {
         return;
     }
 
-    // Topic shape: devices/{device_code}/status — pull device_code out of it.
     const parts = topic.split('/');
     const device_code = parts[1];
 
     const { recording_id, status, duration_played_seconds, trigger_type } = payload;
 
-    if (!recording_id || !status) {
-        console.error('iotSubscriber: status message missing recording_id or status, ignoring:', payload);
+    if (!status) {
+        console.error('iotSubscriber: status message missing status field, ignoring:', payload);
+        return;
+    }
+
+    // Device-level connection events (online/offline via MQTT Last Will and
+    // Testament) have no recording_id — they're not tied to any playback.
+    // Handle these before the recording lookup below, which requires one.
+    if (status === 'online' || status === 'offline') {
+        const connection = await pool.getConnection();
+        try {
+            const [devices] = await connection.query(
+                'SELECT id FROM devices WHERE device_code = ?',
+                [device_code]
+            );
+
+            if (devices.length === 0) {
+                console.error(`iotSubscriber: no device found for device_code ${device_code}.`);
+                return;
+            }
+
+           if (status === 'online') {
+                await connection.query(
+                    'UPDATE devices SET last_seen_at = NOW(), is_online = TRUE WHERE device_code = ?',
+                    [device_code]
+                );
+                console.log(`iotSubscriber: device ${device_code} is online.`);
+            } else {
+                console.warn(`iotSubscriber: device ${device_code} went offline (detected via Last Will and Testament).`);
+
+                // Immediately fix any recording this device was mid-task on, rather
+                // than waiting for the slower duration-based sweep. We already have
+                // strong evidence something went wrong — no need to wait further.
+                const device_id = devices[0].id;
+                const [inFlight] = await connection.query(
+                    `SELECT r.id, r.reviewed_by
+                    FROM recordings r
+                    WHERE r.baby_id = (SELECT baby_id FROM devices WHERE id = ?)
+                    AND r.status = 'played'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM playback_log pl 
+                        WHERE pl.recording_id = r.id AND pl.played_at >= r.reviewed_at
+                    )`,
+                    [device_id]
+                );
+
+                for (const recording of inFlight) {
+                    await connection.query(
+                        `UPDATE recordings SET status = 'pending_review' WHERE id = ?`,
+                        [recording.id]
+                    );
+                    await connection.query(
+                        `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by, note)
+                        VALUES (?, 'played', 'pending_review', ?, 'Device went offline mid-playback (detected via Last Will and Testament)')`,
+                        [recording.id, recording.reviewed_by]
+                    );
+                    console.warn(`iotSubscriber: recording ${recording.id} reverted immediately — device went offline while it was in flight.`);
+                }
+            }
+        } catch (err) {
+            console.error('iotSubscriber: error handling device status:', err);
+        } finally {
+            connection.release();
+        }
+        return;
+    }
+
+    if (!recording_id) {
+        console.error('iotSubscriber: playback status message missing recording_id, ignoring:', payload);
         return;
     }
 
@@ -86,18 +143,11 @@ async function handleStatusMessage(topic, payloadBuffer) {
         const device_id = devices[0].id;
 
         if (status === 'started') {
-            // Real-time visibility only — recording is already 'played'
-            // optimistically in the DB, so nothing to change here. This is
-            // the hook a future live "currently playing" UI indicator would
-            // read from.
             console.log(`iotSubscriber: recording ${recording_id} started playing on device ${device_code}.`);
             return;
         }
 
         if (status === 'played') {
-            // Recording was already marked 'played' the moment the command
-            // was sent — this confirmation just proves it genuinely
-            // happened, and lets us log the real, actual duration.
             await connection.query(
                 `INSERT INTO playback_log (id, recording_id, device_id, triggered_by, duration_played_seconds, trigger_source)
                  VALUES (UUID(), ?, ?, 
@@ -110,10 +160,7 @@ async function handleStatusMessage(topic, payloadBuffer) {
         }
 
         if (status === 'stopped') {
-            // Nurse-initiated stop already reverted the DB via /stop itself —
-            // nothing further to do here, this message just confirms the
-            // device actually received and acted on the stop command.
-            console.log(`iotSubscriber: recording ${recording_id} confirmed stopped on device. Duration played: ${duration_played_seconds}s.`);
+            console.log(`iotSubscriber: recording ${recording_id} confirmed stopped on device after ${duration_played_seconds}s.`);
             return;
         }
 

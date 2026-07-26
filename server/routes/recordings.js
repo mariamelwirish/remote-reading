@@ -296,6 +296,13 @@ router.patch('/:id/review', authenticate, requireRole('admin', 'nurse'), async (
     }
 });
 
+// POST /api/v1/recordings/:id/play
+// Nurse or Admin manually triggers playback. Checks the device is online
+// BEFORE doing anything else — a known-offline device is rejected instantly,
+// no optimistic 'played' status, no wasted MQTT publish. If the device is
+// online but fails afterward anyway (crashed mid-fetch, etc.), that's caught
+// separately by iotSubscriber.js (fast) or the scheduler's stale-playback
+// sweep (slow backstop).
 router.post('/:id/play', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
     const recording_id = req.params.id;
     const connection = await pool.getConnection();
@@ -323,7 +330,7 @@ router.post('/:id/play', authenticate, requireRole('admin', 'nurse'), async (req
         }
 
         const [devices] = await connection.query(
-            'SELECT id, device_code FROM devices WHERE baby_id = ? AND is_active = TRUE',
+            'SELECT id, device_code, is_online FROM devices WHERE baby_id = ? AND is_active = TRUE',
             [recording.baby_id]
         );
 
@@ -332,6 +339,11 @@ router.post('/:id/play', authenticate, requireRole('admin', 'nurse'), async (req
         }
 
         const device = devices[0];
+
+        if (!device.is_online) {
+            return res.status(400).json({ error: 'Device appears to be offline. Cannot play until it reconnects.' });
+        }
+
         const wasScheduled = recording.status === 'scheduled';
 
         const presigned_url = await getPresignedUrl(recording.s3_key);
@@ -389,15 +401,12 @@ router.post('/:id/play', authenticate, requireRole('admin', 'nurse'), async (req
         connection.release();
     }
 });
+
 // POST /api/v1/recordings/:id/stop
 // Nurse or Admin stops playback mid-play. Publishes MQTT stop, then reverts
 // the recording to 'pending_review' — not back to 'scheduled', since the
 // original scheduled_time is now in the past and no longer meaningful. The
 // nurse makes a fresh scheduling decision via PATCH /recordings/:id/review.
-// Can be called from either 'awaiting_confirmation' (Pi may genuinely be
-// playing right now, just hasn't confirmed yet) or 'played' (Pi already
-// confirmed, but nurse wants to stop it anyway — e.g. it's looping or a
-// mistake was caught after confirmation arrived).
 router.post('/:id/stop', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
     const recording_id = req.params.id;
     const connection = await pool.getConnection();
