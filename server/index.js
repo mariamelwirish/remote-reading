@@ -7,6 +7,9 @@ const recordingsRoutes = require('./routes/recordings'); // Imports the recordin
 const babiesRoutes = require('./routes/babies'); // Imports the baby recordings routes defined in babies.js
 const roomsRoutes = require('./routes/rooms'); // Imports the rooms routes defined in rooms.js
 const adminRoutes = require('./routes/admin'); // Imports the admin routes defined in admin.js
+const devicesRoutes = require('./routes/devices'); // Imports the devices routes defined in devices.js
+const { startScheduler } = require('./scheduler');
+const { startIotSubscriber } = require('./iotSubscriber');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +26,7 @@ app.use('/api/v1/recordings', recordingsRoutes); // Mounts the recordings routes
 app.use('/api/v1/babies', babiesRoutes); // Mounts the baby recordings routes at /api/v1/babies.
 app.use('/api/v1/rooms', roomsRoutes); // Mounts the rooms routes at /api/v1/rooms.
 app.use('/api/v1/admin', adminRoutes); // Mounts the admin routes at /api/v1/admin.
+app.use('/api/v1/devices', devicesRoutes); // Mounts the devices routes at /api/v1/devices.
 
 // Health check route
 app.get('/', (req, res) => {
@@ -37,6 +41,13 @@ pool.getConnection()
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
+    startScheduler();
+
+    try {
+      startIotSubscriber();
+    } catch (err) {
+      console.error('Failed to start IoT status subscriber (server continues without it):', err);
+    }
   })
   .catch(err => {
     console.error('Database connection failed:', err.message);

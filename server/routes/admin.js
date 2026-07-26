@@ -46,7 +46,7 @@ router.post('/nurses', authenticate, requireRole('admin', 'nurse'), async (req, 
         const hospital_id = await generateSequentialId('users', 'hospital_id', 'N');
         const rawToken = generateRawToken();       // emailed to the nurse
         const tokenHash = hashToken(rawToken);     // stored in the DB  
-        // console.log('RAW TOKEN (dev only):', rawToken);
+        console.log('RAW TOKEN (dev only):', rawToken);
         const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000)
             .toISOString().slice(0, 19).replace('T', ' ');
 
@@ -181,6 +181,7 @@ router.post('/parents', authenticate, requireRole('admin', 'nurse'), async (req,
         const id = uuidv4();
         const hospital_id = await generateSequentialId('users', 'hospital_id', 'P');
         const rawToken = generateRawToken();
+        console.log('RAW TOKEN (dev only):', rawToken);
         const tokenHash = hashToken(rawToken);
         const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000)
             .toISOString().slice(0, 19).replace('T', ' ');

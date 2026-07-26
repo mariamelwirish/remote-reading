@@ -21,10 +21,11 @@ const multer = require('multer'); // file upload middleware
 const mm = require('music-metadata'); // music metadata library, used to read duration of audio files
 const pool = require('../config/db'); // database connection 
 const authenticate = require('../middleware/auth'); // JWT middleware
-const {uploadAudio} = require('../utils/s3'); // s3 upload utility function
+const {uploadAudio, getPresignedUrl} = require('../utils/s3'); // s3 upload + presigned URL utility functions
 const {notifyParentScheduled, notifyParentRescheduled, notifyParentRejected} = require('../utils/ses');
 const { v4: uuidv4 } = require('uuid');
 const requireRole = require('../middleware/requireRole');
+const { publishPlay, publishStop } = require('../utils/iot');
 
 
 
@@ -289,6 +290,186 @@ router.patch('/:id/review', authenticate, requireRole('admin', 'nurse'), async (
     } catch (err) {
         await connection.rollback();
         console.error('PATCH /recordings/:id/review error:', err);
+        return res.status(500).json({ error: 'Internal server error!' });
+    } finally {
+        connection.release();
+    }
+});
+
+router.post('/:id/play', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const recording_id = req.params.id;
+    const connection = await pool.getConnection();
+
+    try {
+        const [recordings] = await connection.query(
+            `SELECT r.*, b.id AS baby_id
+             FROM recordings r
+             JOIN babies b ON r.baby_id = b.id
+             WHERE r.id = ?`,
+            [recording_id]
+        );
+
+        if (recordings.length === 0) {
+            return res.status(404).json({ error: 'Recording not found!' });
+        }
+
+        const recording = recordings[0];
+
+        if (recording.status === 'played') {
+            return res.status(400).json({ error: 'Recording has already been played!' });
+        }
+        if (recording.status === 'rejected' || recording.status === 'cancelled') {
+            return res.status(400).json({ error: `Cannot play a recording with status '${recording.status}'.` });
+        }
+
+        const [devices] = await connection.query(
+            'SELECT id, device_code FROM devices WHERE baby_id = ? AND is_active = TRUE',
+            [recording.baby_id]
+        );
+
+        if (devices.length === 0) {
+            return res.status(400).json({ error: 'No active device is assigned to this baby yet.' });
+        }
+
+        const device = devices[0];
+        const wasScheduled = recording.status === 'scheduled';
+
+        const presigned_url = await getPresignedUrl(recording.s3_key);
+
+        await connection.beginTransaction();
+
+        await connection.query(
+            `UPDATE schedules SET status = 'cancelled' WHERE recording_id = ? AND status = 'pending'`,
+            [recording_id]
+        );
+
+        await connection.query(
+            `UPDATE recordings
+             SET status = 'played', reviewed_at = COALESCE(reviewed_at, NOW()), reviewed_by = COALESCE(reviewed_by, ?)
+             WHERE id = ?`,
+            [req.user.id, recording_id]
+        );
+
+        await connection.query(
+            `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by, note)
+             VALUES (?, ?, 'played', ?, ?)`,
+            [recording_id, recording.status, req.user.id, wasScheduled ? 'Manual trigger (was scheduled)' : 'Manual trigger']
+        );
+
+        await connection.commit();
+
+        const [updated] = await connection.query(
+            'SELECT id, baby_id, parent_id, title, status, duration_seconds, uploaded_at, reviewed_at, reviewed_by FROM recordings WHERE id = ?',
+            [recording_id]
+        );
+
+        // MQTT publish AFTER commit — a failed publish must not roll back the
+        // already-committed 'played' status; it's surfaced as a warning instead.
+        // If the Pi later reports a failure over MQTT (fetch_failed, etc.),
+        // iotSubscriber.js will revert this back to pending_review.
+        try {
+            await publishPlay(device.device_code, { recording_id, presigned_url, trigger_type: 'manual' });
+        } catch (mqttErr) {
+            console.error('IoT publish failed (play):', mqttErr);
+            return res.status(200).json({
+                message: 'Recording marked as played but the device did not receive the command. Check device connectivity.',
+                recording: updated[0]
+            });
+        }
+
+        return res.status(200).json({
+            message: 'Play command sent to device.',
+            recording: updated[0]
+        });
+    } catch (err) {
+        await connection.rollback();
+        console.error('POST /recordings/:id/play error:', err);
+        return res.status(500).json({ error: 'Internal server error!' });
+    } finally {
+        connection.release();
+    }
+});
+// POST /api/v1/recordings/:id/stop
+// Nurse or Admin stops playback mid-play. Publishes MQTT stop, then reverts
+// the recording to 'pending_review' — not back to 'scheduled', since the
+// original scheduled_time is now in the past and no longer meaningful. The
+// nurse makes a fresh scheduling decision via PATCH /recordings/:id/review.
+// Can be called from either 'awaiting_confirmation' (Pi may genuinely be
+// playing right now, just hasn't confirmed yet) or 'played' (Pi already
+// confirmed, but nurse wants to stop it anyway — e.g. it's looping or a
+// mistake was caught after confirmation arrived).
+router.post('/:id/stop', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const recording_id = req.params.id;
+    const connection = await pool.getConnection();
+
+    try {
+        const [recordings] = await connection.query(
+            `SELECT r.*, b.id AS baby_id
+             FROM recordings r
+             JOIN babies b ON r.baby_id = b.id
+             WHERE r.id = ?`,
+            [recording_id]
+        );
+
+        if (recordings.length === 0) {
+            return res.status(404).json({ error: 'Recording not found!' });
+        }
+
+        const recording = recordings[0];
+
+        if (recording.status !== 'played') {
+            return res.status(400).json({ error: 'Recording is not currently playing.' });
+        }
+
+        const [devices] = await connection.query(
+            'SELECT id, device_code FROM devices WHERE baby_id = ? AND is_active = TRUE',
+            [recording.baby_id]
+        );
+
+        if (devices.length === 0) {
+            return res.status(400).json({ error: 'No active device is assigned to this baby.' });
+        }
+
+        const device = devices[0];
+        const previousStatus = recording.status;
+
+        await connection.beginTransaction();
+
+        await connection.query(
+            `UPDATE recordings SET status = 'pending_review' WHERE id = ?`,
+            [recording_id]
+        );
+
+        await connection.query(
+            `INSERT INTO recording_status_history (recording_id, from_status, to_status, changed_by, note)
+             VALUES (?, ?, 'pending_review', ?, 'Playback stopped manually')`,
+            [recording_id, previousStatus, req.user.id]
+        );
+
+        await connection.commit();
+
+        const [updated] = await connection.query(
+            'SELECT id, baby_id, parent_id, title, status, duration_seconds, uploaded_at, reviewed_at, reviewed_by FROM recordings WHERE id = ?',
+            [recording_id]
+        );
+
+        try {
+            await publishStop(device.device_code);
+        } catch (mqttErr) {
+            console.error('IoT publish failed (stop):', mqttErr);
+            return res.status(200).json({
+                message: 'Recording reverted to pending review, but the stop command may not have reached the device.',
+                recording: updated[0]
+            });
+        }
+
+        return res.status(200).json({
+            message: 'Stop command sent. Recording returned to pending review.',
+            recording: updated[0]
+        });
+    } catch (err) {
+        await connection.rollback();
+        console.error('POST /recordings/:id/stop error:', err);
         return res.status(500).json({ error: 'Internal server error!' });
     } finally {
         connection.release();

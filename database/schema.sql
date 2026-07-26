@@ -16,8 +16,6 @@ CREATE TABLE users (
 );
 
 -- Rooms table
--- capacity: data-driven occupancy limit. Admin sets it per room (most = 1, a few = 2).
--- room_number is the ONLY identifier now — floor and wing both dropped (doctor meeting, June 2026).
 CREATE TABLE rooms (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     room_number VARCHAR(20) UNIQUE NOT NULL,
@@ -26,12 +24,7 @@ CREATE TABLE rooms (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- NOTE: incubators table removed entirely (doctor meeting, June 2026).
--- Nurses swap incubators too often for babies.incubator_id to stay accurate,
--- so babies are now assigned directly to rooms.
-
 -- Babies table
--- room_id (FK -> rooms.id) replaces the old incubator_id.
 CREATE TABLE babies (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     record_number VARCHAR(20) UNIQUE NOT NULL,
@@ -60,8 +53,11 @@ CREATE TABLE parent_baby (
 );
 
 -- Recordings table
--- description: parent-submitted summary of the recording content
--- ai_transcript, ai_flags, ai_summary: nullable placeholders for Phase 5 AI content check
+-- status flips to 'played' immediately when a play command is sent (manual
+-- or scheduled) — optimistic, not confirmation-gated. The Pi's MQTT status
+-- channel (started/played/stopped/fetch_failed) is monitored separately
+-- (iotSubscriber.js): genuine device failure reverts to 'pending_review',
+-- genuine success writes a playback_log row with the real duration.
 CREATE TABLE recordings (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     baby_id CHAR(36) NOT NULL,
@@ -82,9 +78,6 @@ CREATE TABLE recordings (
 );
 
 -- Recording status history table
--- Logs every status transition with who made it and when.
--- 'returned' removed from ENUM — nurse actions are schedule, play now, or reject only.
--- 'cancelled' = baby discharged, recording no longer actionable.
 CREATE TABLE recording_status_history (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
@@ -98,8 +91,6 @@ CREATE TABLE recording_status_history (
 );
 
 -- Schedules table
--- One row per scheduling event. A recording can be scheduled multiple times.
--- node-cron only processes rows with status = 'pending'.
 CREATE TABLE schedules (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
@@ -112,23 +103,35 @@ CREATE TABLE schedules (
     FOREIGN KEY (scheduled_by) REFERENCES users(id)
 );
 
+-- Devices table
+-- baby_id is nullable + UNIQUE — enforces one-to-one device-to-baby at the
+-- DB level. Room is derived via baby_id -> babies.room_id, not stored here.
+CREATE TABLE devices (
+    id CHAR(36) PRIMARY KEY,
+    device_code VARCHAR(50) UNIQUE NOT NULL,
+    baby_id CHAR(36) UNIQUE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_seen_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (baby_id) REFERENCES babies(id)
+);
+
 -- Playback log table
--- Written after Pi confirms playback. Schedules = intentions. Playback log = reality.
--- room_id replaces incubator_id (Phase 3 MQTT topics will be room-keyed).
+-- Written only after the Pi confirms genuine playback over MQTT.
+-- Schedules/recordings.status = intentions. playback_log = confirmed reality.
 CREATE TABLE playback_log (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     recording_id CHAR(36) NOT NULL,
-    room_id CHAR(36) NOT NULL,
+    device_id CHAR(36) NOT NULL,
     triggered_by CHAR(36),
     played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     duration_played_seconds INTEGER NOT NULL,
     trigger_source ENUM('scheduled', 'manual') NOT NULL,
     FOREIGN KEY (recording_id) REFERENCES recordings(id),
-    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    FOREIGN KEY (device_id) REFERENCES devices(id)
 );
 
 -- Trigger: enforce maximum 2 parents per baby
--- Enforced at both application level and database level
 DELIMITER //
 
 CREATE TRIGGER enforce_max_two_parents
