@@ -173,7 +173,12 @@ router.get('/:id/recordings', authenticate, async (req, res) => {
 
         let query = `SELECT r.id, r.title, r.description, r.status, r.duration_seconds,
                         r.s3_key, r.uploaded_at, r.reviewed_at,
-                        s.scheduled_time
+                        s.scheduled_time,
+                        (SELECT h.note FROM recording_status_history h
+                          WHERE h.recording_id = r.id AND h.note IS NOT NULL
+                          ORDER BY h.changed_at DESC LIMIT 1) AS latest_note,
+                        EXISTS(SELECT 1 FROM playback_log pl
+                                WHERE pl.recording_id = r.id AND pl.played_at >= r.reviewed_at) AS confirmed_played
                     FROM recordings r
                     LEFT JOIN schedules s
                         ON s.recording_id = r.id AND s.status = 'pending'

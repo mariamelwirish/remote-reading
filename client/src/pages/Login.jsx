@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Mail, Lock } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import api from '../api/client';
+import { theme } from '../theme';
+import { AuthShell } from '../components/layout/AuthShell';
+import { Button, Field } from '../components/ui';
 
 export default function Login() {
   const { login } = useAuth();
@@ -21,45 +25,45 @@ export default function Login() {
       login(data.token, data.user);
       navigate(`/${data.user.role}`, { replace: true });
     } catch (err) {
-      setError(err.response?.data?.error ?? 'Login failed. Please try again.');
+      setError(err.response?.data?.error ?? 'We couldn’t sign you in. Please check your email and password.');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 400, margin: '100px auto', padding: '0 16px' }}>
-      <h1 style={{ fontSize: '1.1rem', marginBottom: 4 }}>Remote Reading for Newborns</h1>
-      <h2 style={{ marginBottom: 24 }}>Sign In</h2>
+    <AuthShell title="Welcome back" subtitle="Sign in to continue">
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 12 }}>
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoFocus
-            style={{ display: 'block', width: '100%', marginTop: 4, padding: '8px' }}
-          />
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={{ display: 'block', width: '100%', marginTop: 4, padding: '8px' }}
-          />
-        </div>
-        {error && <p style={{ color: 'red', marginBottom: 12 }}>{error}</p>}
-        <button type="submit" disabled={loading} style={{ width: '100%', padding: '10px' }}>
-          {loading ? 'Signing in…' : 'Sign In'}
-        </button>
+        <Field
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          autoFocus
+          placeholder="you@example.com"
+          leftIcon={<Mail size={16} color={theme.color.textMuted} />}
+          style={{ marginBottom: 14 }}
+        />
+        <Field
+          label="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          placeholder="Your password"
+          leftIcon={<Lock size={16} color={theme.color.textMuted} />}
+          style={{ marginBottom: 18 }}
+        />
+        {error && (
+          <p style={{ color: theme.color.danger, background: theme.color.dangerSoft, padding: '8px 12px', borderRadius: theme.radius.sm, fontSize: 13, margin: '0 0 14px' }}>
+            {error}
+          </p>
+        )}
+        <Button type="submit" disabled={loading} style={{ width: '100%' }}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </Button>
       </form>
-    </div>
+    </AuthShell>
   );
 }

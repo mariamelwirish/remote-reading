@@ -1,16 +1,96 @@
+/* Friendly rounded font — falls back to system fonts if offline. */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap');
+
+/* ------------------------------------------------------------------ *
+ * Theme tokens as CSS variables. Light is the default (:root); dark   *
+ * overrides them under html[data-theme="dark"]. theme.js references   *
+ * these via var(--rr-*), so toggling the attribute reskins instantly. *
+ * ------------------------------------------------------------------ */
+:root {
+  --rr-page-bg: #FAF6F0;
+  --rr-card-bg: #FFFFFF;
+  --rr-subtle-bg: #F3EEE6;
+  --rr-chrome-bg: #ECE3D4;      /* header/footer — darker than the cream body */
+  --rr-chrome-border: #DFD4C2;
+  --rr-overlay: rgba(59, 54, 48, 0.45);
+
+  --rr-text: #3B3630;
+  --rr-text-muted: #8A8078;
+  --rr-text-faint: #B4AAA0;
+
+  --rr-accent: #5F836B;
+  --rr-accent-hover: #527259;
+  --rr-accent-soft: #E8EFE8;
+
+  --rr-border: #EBE3D8;
+  --rr-border-strong: #DDD2C3;
+
+  --rr-success: #5F836B;  --rr-success-soft: #E8EFE8;
+  --rr-warn: #B87A33;     --rr-warn-soft: #F5EBD9;
+  --rr-danger: #BC6455;   --rr-danger-soft: #F6E7E2;
+  --rr-info: #3B76C4;     --rr-info-soft: #E7F0FA;
+
+  --rr-online: #5F836B;
+  --rr-offline: #C0392B;
+}
+
+html[data-theme="dark"] {
+  /* Graphite — neutral cool-grey surfaces, sage accent. */
+  --rr-page-bg: #17191C;
+  --rr-card-bg: #212429;
+  --rr-subtle-bg: #2A2E33;
+  --rr-chrome-bg: #0F1113;      /* header/footer — darker than the body */
+  --rr-chrome-border: #26292E;
+  --rr-overlay: rgba(0, 0, 0, 0.62);
+
+  --rr-text: #E7E9EC;
+  --rr-text-muted: #9BA1A8;
+  --rr-text-faint: #6B7178;
+
+  --rr-accent: #8CB39A;
+  --rr-accent-hover: #9CC0A8;
+  --rr-accent-soft: #263029;
+
+  --rr-border: #33383D;
+  --rr-border-strong: #444A50;
+
+  --rr-success: #8CB39A;  --rr-success-soft: #263029;
+  --rr-warn: #D3A45E;     --rr-warn-soft: #342D22;
+  --rr-danger: #D98A78;   --rr-danger-soft: #352724;
+  --rr-info: #7FA6D9;     --rr-info-soft: #232B36;
+
+  --rr-online: #8CB39A;
+  --rr-offline: #E07A6A;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: "Nunito", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  color: #1a1a1a;
-  background: #fff;
+  color: var(--rr-text);
+  background: var(--rr-page-bg);
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 input, button, select, textarea {
   font: inherit;
+}
+
+/* Gentle sage focus ring on all interactive controls */
+input:focus, select:focus, textarea:focus {
+  border-color: var(--rr-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rr-accent) 18%, transparent);
+}
+
+::placeholder { color: var(--rr-text-faint); }
+
+/* Spinner animation used by <Spinner /> */
+@keyframes rr-spin {
+  to { transform: rotate(360deg); }
 }

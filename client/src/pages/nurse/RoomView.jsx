@@ -1,25 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Baby as BabyIcon } from 'lucide-react';
 import api from '../../api/client';
+import { theme } from '../../theme';
+import { Badge, Spinner, EmptyState } from '../../components/ui';
+
+const c = theme.color;
 
 function RecordingBadges({ pendingCount, scheduledCount }) {
   if (pendingCount === 0 && scheduledCount === 0) {
-    return (
-      <div style={{ marginTop: 10, fontSize: 12, color: '#9ca3af' }}>No pending recordings</div>
-    );
+    return <div style={{ marginTop: 10, fontSize: 13, color: c.textFaint }}>No messages waiting</div>;
   }
   return (
     <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-      {pendingCount > 0 && (
-        <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: '#fef3c7', color: '#b45309' }}>
-          {pendingCount} pending review
-        </span>
-      )}
-      {scheduledCount > 0 && (
-        <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: '#dbeafe', color: '#1d4ed8' }}>
-          {scheduledCount} scheduled
-        </span>
-      )}
+      {pendingCount > 0 && <Badge tone="warn">{pendingCount} waiting for review</Badge>}
+      {scheduledCount > 0 && <Badge tone="info">{scheduledCount} scheduled</Badge>}
     </div>
   );
 }
@@ -33,31 +28,29 @@ function BabyCard({ baby, onClick }) {
     <button
       onClick={onClick}
       style={{
-        background: '#fff',
-        border: `1px solid ${hasPending ? '#fde68a' : '#e5e7eb'}`,
-        borderRadius: 10,
-        padding: '18px 16px',
-        cursor: 'pointer',
-        textAlign: 'left',
-        width: '100%',
-        transition: 'border-color 0.15s',
+        background: c.cardBg, border: `1px solid ${hasPending ? c.warn : c.border}`,
+        borderRadius: theme.radius.lg, boxShadow: theme.shadow.sm, padding: '18px 18px',
+        cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'box-shadow .15s, transform .15s',
       }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = '#93c5fd'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = hasPending ? '#fde68a' : '#e5e7eb'}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = theme.shadow.md; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = theme.shadow.sm; e.currentTarget.style.transform = 'none'; }}
     >
-      <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>
-        {baby.first_name} {baby.last_name}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 10, background: c.accentSoft, color: c.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <BabyIcon size={20} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: c.text }}>{baby.first_name} {baby.last_name}</div>
+            <div style={{ color: c.textMuted, fontSize: 13, marginTop: 2 }}>
+              {baby.gender.charAt(0).toUpperCase() + baby.gender.slice(1)} · {ageDays} days old
+            </div>
+            {baby.record_number && <div style={{ color: c.textFaint, fontSize: 12, marginTop: 2 }}>ID {baby.record_number}</div>}
+          </div>
+        </div>
+        <ChevronRight size={18} color={c.textFaint} style={{ flexShrink: 0 }} />
       </div>
-      <div style={{ color: '#6b7280', fontSize: 13, marginTop: 4 }}>
-        {baby.gender.charAt(0).toUpperCase() + baby.gender.slice(1)} · {ageDays} days old
-      </div>
-      <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 4 }}>
-        Admitted {new Date(baby.admission_date).toLocaleDateString()}
-      </div>
-      <RecordingBadges
-        pendingCount={baby.pending_review_count}
-        scheduledCount={baby.scheduled_count}
-      />
+      <RecordingBadges pendingCount={baby.pending_review_count} scheduledCount={baby.scheduled_count} />
     </button>
   );
 }
@@ -73,42 +66,34 @@ export default function RoomView() {
   useEffect(() => {
     api.get(`/rooms/${roomId}/babies`)
       .then(({ data }) => setBabies(data))
-      .catch(() => setError('Failed to load babies for this room.'))
+      .catch(() => setError('We couldn’t load the babies in this room.'))
       .finally(() => setLoading(false));
   }, [roomId]);
 
-  // Derive room number from the first baby's context, or just show the ID fallback
-  const roomLabel = babies[0] ? '' : '';
-
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 16px' }}>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '8px 16px 40px' }}>
       <button
         onClick={() => navigate('/nurse')}
-        style={{ background: 'none', border: 'none', color: '#1d4ed8', cursor: 'pointer', padding: 0, marginBottom: 20, fontSize: 14 }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: c.accent, cursor: 'pointer', padding: 0, marginBottom: 18, fontSize: 14, fontWeight: 600 }}
       >
-        ← All Rooms
+        <ChevronLeft size={16} /> All rooms
       </button>
 
-      <h1 style={{ marginTop: 0, fontSize: '1.4rem', marginBottom: 24 }}>
-        Babies in Room
-      </h1>
+      <h1 style={{ marginTop: 0, fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 22 }}>Babies in this room</h1>
 
-      {loading && <p style={{ color: '#6b7280' }}>Loading…</p>}
-      {error   && <p style={{ color: 'red' }}>{error}</p>}
+      {error && <p style={{ color: c.danger }}>{error}</p>}
 
-      {!loading && babies.length === 0 && (
-        <p style={{ color: '#6b7280' }}>No active babies in this room.</p>
+      {loading ? (
+        <Spinner />
+      ) : babies.length === 0 ? (
+        <EmptyState icon={<BabyIcon size={34} color={c.textFaint} />} title="No babies in this room" hint="Babies assigned to this room will show up here." />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+          {babies.map(baby => (
+            <BabyCard key={baby.id} baby={baby} onClick={() => navigate(`babies/${baby.id}`)} />
+          ))}
+        </div>
       )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
-        {babies.map(baby => (
-          <BabyCard
-            key={baby.id}
-            baby={baby}
-            onClick={() => navigate(`babies/${baby.id}`)}
-          />
-        ))}
-      </div>
     </div>
   );
 }

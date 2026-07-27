@@ -485,4 +485,27 @@ router.post('/:id/stop', authenticate, requireRole('admin', 'nurse'), async (req
     }
 });
 
+// GET /api/v1/recordings/:id/history
+// The full status timeline for a recording, with the note behind each change —
+// this is the "why" (e.g. why it reverted to review, what the device reported).
+// Surfaced to nurses/admins as a plain-language activity log.
+router.get('/:id/history', authenticate, requireRole('admin', 'nurse'), async (req, res) => {
+    const recording_id = req.params.id;
+    try {
+        const [rows] = await pool.query(
+            `SELECT h.id, h.from_status, h.to_status, h.note, h.changed_at,
+                    u.first_name, u.last_name, u.role
+             FROM recording_status_history h
+             LEFT JOIN users u ON u.id = h.changed_by
+             WHERE h.recording_id = ?
+             ORDER BY h.changed_at DESC`,
+            [recording_id]
+        );
+        return res.status(200).json({ history: rows });
+    } catch (err) {
+        console.error('GET /recordings/:id/history error:', err);
+        return res.status(500).json({ error: 'Failed to load recording history.' });
+    }
+});
+
 module.exports = router;

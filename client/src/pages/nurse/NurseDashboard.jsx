@@ -1,49 +1,49 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
+import { DoorOpen, ChevronRight } from 'lucide-react';
 import api from '../../api/client';
+import { theme } from '../../theme';
+import { Badge, Spinner, EmptyState, PageHeader } from '../../components/ui';
+
+const c = theme.color;
 
 function RoomCard({ room, onClick }) {
   const isFull = room.occupied >= room.capacity;
   const isEmpty = room.occupied === 0;
+  const tone = isFull ? 'warn' : isEmpty ? 'neutral' : 'success';
+  const label = isFull ? 'Full' : isEmpty ? 'Empty' : 'Has space';
 
   return (
     <button
       onClick={onClick}
       style={{
-        background: '#fff',
-        border: `2px solid ${isFull ? '#fca5a5' : isEmpty ? '#e5e7eb' : '#86efac'}`,
-        borderRadius: 10,
-        padding: '20px 16px',
-        cursor: 'pointer',
-        textAlign: 'left',
-        width: '100%',
+        background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: theme.radius.lg,
+        boxShadow: theme.shadow.sm, padding: '20px 18px', cursor: 'pointer', textAlign: 'left',
+        width: '100%', transition: 'box-shadow .15s, transform .15s',
+        display: 'flex', flexDirection: 'column', gap: 10,
       }}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = theme.shadow.md; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = theme.shadow.sm; e.currentTarget.style.transform = 'none'; }}
     >
-      <div style={{ fontSize: '1.3rem', fontWeight: 700 }}>Room {room.room_number}</div>
-      <div style={{ marginTop: 8, color: '#6b7280', fontSize: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 10, background: c.accentSoft, color: c.accent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <DoorOpen size={20} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: c.text }}>Room {room.room_number}</div>
+        </div>
+        <ChevronRight size={18} color={c.textFaint} />
+      </div>
+      <div style={{ color: c.textMuted, fontSize: 14 }}>
         {room.occupied} / {room.capacity} {room.capacity === 1 ? 'baby' : 'babies'}
       </div>
-      <div style={{
-        marginTop: 10,
-        display: 'inline-block',
-        fontSize: 12,
-        fontWeight: 600,
-        padding: '2px 10px',
-        borderRadius: 999,
-        background: isFull ? '#fee2e2' : isEmpty ? '#f3f4f6' : '#dcfce7',
-        color: isFull ? '#b91c1c' : isEmpty ? '#9ca3af' : '#15803d',
-      }}>
-        {isFull ? 'Full' : isEmpty ? 'Empty' : 'Has space'}
-      </div>
+      <Badge tone={tone}>{label}</Badge>
     </button>
   );
 }
 
 export default function NurseDashboard() {
-  const { user, logout } = useAuth();
   const navigate = useNavigate();
-
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -51,38 +51,27 @@ export default function NurseDashboard() {
   useEffect(() => {
     api.get('/rooms', { params: { active: 'true' } })
       .then(({ data }) => setRooms(data))
-      .catch(() => setError('Failed to load rooms.'))
+      .catch(() => setError('We couldn’t load the rooms. Please try again.'))
       .finally(() => setLoading(false));
   }, []);
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 16px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.4rem' }}>NICU Rooms</h1>
-          <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 14 }}>Welcome, {user.first_name}</p>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '8px 16px 40px' }}>
+      <PageHeader title="NICU Rooms" subtitle="Choose a room to see its babies and their messages" />
+
+      {error && <p style={{ color: c.danger }}>{error}</p>}
+
+      {loading ? (
+        <Spinner label="Loading rooms…" />
+      ) : rooms.length === 0 ? (
+        <EmptyState icon={<DoorOpen size={34} color={c.textFaint} />} title="No active rooms" hint="Rooms will appear here once they’re set up." />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
+          {rooms.map(room => (
+            <RoomCard key={room.id} room={room} onClick={() => navigate(`rooms/${room.id}`)} />
+          ))}
         </div>
-        <button onClick={logout} style={{ fontSize: 13, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}>
-          Sign out
-        </button>
-      </div>
-
-      {loading && <p style={{ color: '#6b7280' }}>Loading rooms…</p>}
-      {error   && <p style={{ color: 'red' }}>{error}</p>}
-
-      {!loading && rooms.length === 0 && (
-        <p style={{ color: '#6b7280' }}>No active rooms found.</p>
       )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16 }}>
-        {rooms.map(room => (
-          <RoomCard
-            key={room.id}
-            room={room}
-            onClick={() => navigate(`rooms/${room.id}`)}
-          />
-        ))}
-      </div>
     </div>
   );
 }

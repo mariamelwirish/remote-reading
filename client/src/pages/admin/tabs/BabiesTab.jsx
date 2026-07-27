@@ -1,25 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Plus, Pencil, ArrowRightLeft, LogOut, RotateCcw, Baby as BabyIcon, AudioLines } from 'lucide-react';
 import api from '../../../api/client';
 import { Modal } from '../../../components/ui/Modal';
+import { theme } from '../../../theme';
+import { Button, Badge, Field, Select, Spinner, EmptyState, PageHeader } from '../../../components/ui';
 
-const inp = { display: 'block', width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #d1d5db', marginTop: 4, fontSize: 14 };
-const primaryBtn  = { padding: '8px 18px', borderRadius: 6, border: 'none', background: '#1d4ed8', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 13 };
-const cancelBtn   = { padding: '8px 14px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 13 };
-const dangerBtn   = { padding: '8px 16px', borderRadius: 6, border: 'none', background: '#b91c1c', color: '#fff', fontWeight: 600, cursor: 'pointer' };
+const c = theme.color;
 
 // Formats a DB date string (ISO or YYYY-MM-DD) to just the date part for <input type="date">
 const toDateInput = (val) => (val ? val.slice(0, 10) : '');
+const fmtDate = (val) => (val ? new Date(val).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
 
+// Searchable room picker — type a room number to filter suggestions.
 function RoomSelect({ value, onChange, rooms, required }) {
   return (
-    <select value={value} onChange={onChange} required={required} style={inp}>
-      <option value="">Select a room…</option>
-      {rooms.map(r => (
-        <option key={r.id} value={r.id}>
-          Room {r.room_number} — {r.occupied}/{r.capacity} occupied
-        </option>
-      ))}
-    </select>
+    <Select
+      searchable
+      required={required}
+      value={value}
+      onChange={onChange}
+      placeholder="Select a room…"
+      searchPlaceholder="Search by room number…"
+      emptyText="No rooms found"
+      options={rooms.map(r => ({
+        value: r.id,
+        label: `Room ${r.room_number}`,
+        sublabel: `${r.occupied}/${r.capacity} occupied`,
+        keywords: String(r.room_number),
+      }))}
+    />
   );
 }
 
@@ -36,17 +46,17 @@ function BabyForm({ initial, activeRooms, onSubmit, loading, error }) {
   });
 
   const set = (key) => (e) => setF(prev => ({ ...prev, [key]: e.target.value }));
+  const setVal = (key) => (v) => setF(prev => ({ ...prev, [key]: v })); // for custom Select (passes value)
 
   function handleSubmit(e) {
     e.preventDefault();
     if (isEdit) {
-      // Only send fields that changed
       const body = {};
-      if (f.first_name    !== initial.first_name)              body.first_name    = f.first_name;
-      if (f.last_name     !== initial.last_name)               body.last_name     = f.last_name;
+      if (f.first_name    !== initial.first_name)                 body.first_name    = f.first_name;
+      if (f.last_name     !== initial.last_name)                  body.last_name     = f.last_name;
       if (f.date_of_birth !== toDateInput(initial.date_of_birth)) body.date_of_birth = f.date_of_birth;
-      if (f.gender        !== initial.gender)                  body.gender        = f.gender;
-      if (f.room_id       !== initial.room_id)                 body.room_id       = f.room_id;
+      if (f.gender        !== initial.gender)                     body.gender        = f.gender;
+      if (f.room_id       !== initial.room_id)                    body.room_id       = f.room_id;
       onSubmit(body);
     } else {
       onSubmit(f);
@@ -55,43 +65,33 @@ function BabyForm({ initial, activeRooms, onSubmit, loading, error }) {
 
   return (
     <form onSubmit={handleSubmit}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>First Name</label>
-          <input type="text" value={f.first_name} onChange={set('first_name')} required style={inp} />
-        </div>
-        <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Last Name</label>
-          <input type="text" value={f.last_name} onChange={set('last_name')} required style={inp} />
-        </div>
-        <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Date of Birth</label>
-          <input type="date" value={f.date_of_birth} onChange={set('date_of_birth')} required style={inp} />
-        </div>
-        <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Gender</label>
-          <select value={f.gender} onChange={set('gender')} style={inp}>
-            <option value="male">Male</option>
-            <option value="female">Female</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+        <Field label="First name" type="text" value={f.first_name} onChange={set('first_name')} required />
+        <Field label="Last name" type="text" value={f.last_name} onChange={set('last_name')} required />
+        <Field label="Date of birth" type="date" value={f.date_of_birth} onChange={set('date_of_birth')} required />
+        <Select
+          label="Gender"
+          value={f.gender}
+          onChange={setVal('gender')}
+          options={[
+            { value: 'male', label: 'Male' },
+            { value: 'female', label: 'Female' },
+            { value: 'other', label: 'Other' },
+          ]}
+        />
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Room</label>
-          <RoomSelect value={f.room_id} onChange={set('room_id')} rooms={activeRooms} required />
+          <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}>Room</span>
+          <RoomSelect value={f.room_id} onChange={setVal('room_id')} rooms={activeRooms} required />
         </div>
         {!isEdit && (
           <div style={{ gridColumn: '1 / -1' }}>
-            <label style={{ fontSize: 13, fontWeight: 600 }}>Admission Date</label>
-            <input type="date" value={f.admission_date} onChange={set('admission_date')} required style={inp} />
+            <Field label="Admission date" type="date" value={f.admission_date} onChange={set('admission_date')} required />
           </div>
         )}
       </div>
-      {error && <p style={{ color: 'red', fontSize: 13, marginBottom: 10 }}>{error}</p>}
+      {error && <p style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{error}</p>}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button type="submit" disabled={loading} style={primaryBtn}>
-          {loading ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Baby'}
-        </button>
+        <Button type="submit" disabled={loading}>{loading ? 'Saving…' : isEdit ? 'Save changes' : 'Add baby'}</Button>
       </div>
     </form>
   );
@@ -105,27 +105,20 @@ function RoomPickerModal({ title, onSubmit, onClose, loading, error }) {
     api.get('/rooms/available').then(({ data }) => setAvailableRooms(data)).catch(() => {});
   }, []);
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    onSubmit(roomId);
-  }
-
   return (
     <Modal title={title} onClose={onClose}>
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={(e) => { e.preventDefault(); onSubmit(roomId); }}>
         <div style={{ marginBottom: 16 }}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Select Room</label>
-          <RoomSelect value={roomId} onChange={e => setRoomId(e.target.value)} rooms={availableRooms} required />
+          <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}>Select room</span>
+          <RoomSelect value={roomId} onChange={setRoomId} rooms={availableRooms} required />
           {availableRooms.length === 0 && (
-            <p style={{ fontSize: 13, color: '#b45309', marginTop: 6 }}>No rooms with available capacity.</p>
+            <p style={{ fontSize: 13, color: c.warn, marginTop: 6 }}>No rooms with available capacity.</p>
           )}
         </div>
-        {error && <p style={{ color: 'red', fontSize: 13, marginBottom: 10 }}>{error}</p>}
+        {error && <p style={{ color: c.danger, fontSize: 13, marginBottom: 10 }}>{error}</p>}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button type="button" onClick={onClose} style={cancelBtn}>Cancel</button>
-          <button type="submit" disabled={loading} style={primaryBtn}>
-            {loading ? 'Saving…' : 'Confirm'}
-          </button>
+          <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={loading}>{loading ? 'Saving…' : 'Confirm'}</Button>
         </div>
       </form>
     </Modal>
@@ -134,43 +127,38 @@ function RoomPickerModal({ title, onSubmit, onClose, loading, error }) {
 
 const FILTERS = ['all', 'active', 'discharged'];
 
-function StatusBadge({ status }) {
-  const active = status === 'active';
-  return (
-    <span style={{
-      fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
-      background: active ? '#dcfce7' : '#f3f4f6',
-      color: active ? '#15803d' : '#9ca3af',
-    }}>
-      {active ? 'Active' : 'Discharged'}
-    </span>
-  );
-}
-
 export default function BabiesTab() {
+  const navigate = useNavigate();
   const [babies, setBabies]     = useState([]);
   const [filter, setFilter]     = useState('active');
+  const [search, setSearch]     = useState('');       // raw input (by ID / record_number)
+  const [debounced, setDebounced] = useState('');     // debounced value actually sent to the API
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState('');
-  const [modal, setModal]       = useState(null); // { type, baby? }
+  const [modal, setModal]       = useState(null);
   const [saving, setSaving]     = useState(false);
   const [formError, setFormError] = useState('');
-
-  // Active rooms for the Add/Edit baby form
   const [activeRooms, setActiveRooms] = useState([]);
+
+  // Debounce the search box so we don't hit the API on every keystroke
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(search.trim()), 350);
+    return () => clearTimeout(id);
+  }, [search]);
 
   const fetchBabies = useCallback(() => {
     setLoading(true);
-    const params = filter !== 'all' ? { status: filter } : {};
+    const params = {};
+    if (filter !== 'all') params.status = filter;
+    if (debounced) params.search = debounced;   // backend matches record_number (the B-##### ID)
     api.get('/babies', { params })
       .then(({ data }) => setBabies(data))
-      .catch(() => setError('Failed to load babies.'))
+      .catch(() => setError('We couldn’t load the babies. Please try again.'))
       .finally(() => setLoading(false));
-  }, [filter]);
+  }, [filter, debounced]);
 
   useEffect(() => { fetchBabies(); }, [fetchBabies]);
 
-  // Fetch active rooms when the add or edit modal opens
   useEffect(() => {
     if (modal?.type === 'add' || modal?.type === 'edit') {
       api.get('/rooms', { params: { active: 'true' } })
@@ -181,186 +169,151 @@ export default function BabiesTab() {
 
   function closeModal() { setModal(null); setFormError(''); }
 
-  async function handleAdd(body) {
+  async function runAction(fn, fallbackMsg) {
     setSaving(true); setFormError('');
-    try {
-      await api.post('/babies', body);
-      fetchBabies(); closeModal();
-    } catch (err) {
-      setFormError(err.response?.data?.error ?? 'Failed to add baby.');
-    } finally { setSaving(false); }
+    try { await fn(); fetchBabies(); closeModal(); }
+    catch (err) { setFormError(err.response?.data?.error ?? fallbackMsg); }
+    finally { setSaving(false); }
   }
 
-  async function handleEdit(body) {
-    if (Object.keys(body).length === 0) { closeModal(); return; }
-    setSaving(true); setFormError('');
-    try {
-      await api.patch(`/babies/${modal.baby.id}`, body);
-      fetchBabies(); closeModal();
-    } catch (err) {
-      setFormError(err.response?.data?.error ?? 'Failed to update baby.');
-    } finally { setSaving(false); }
-  }
+  const handleAdd      = (body)   => runAction(() => api.post('/babies', body), 'Failed to add baby.');
+  const handleEdit     = (body)   => { if (Object.keys(body).length === 0) return closeModal(); return runAction(() => api.patch(`/babies/${modal.baby.id}`, body), 'Failed to update baby.'); };
+  const handleDischarge= ()       => runAction(() => api.patch(`/babies/${modal.baby.id}/discharge`), 'Failed to discharge baby.');
+  const handleReadmit  = (roomId) => runAction(() => api.patch(`/babies/${modal.baby.id}/readmit`, { room_id: roomId }), 'Failed to readmit baby.');
+  const handleReassign = (roomId) => runAction(() => api.patch(`/babies/${modal.baby.id}/reassign-room`, { room_id: roomId }), 'Failed to reassign room.');
 
-  async function handleDischarge() {
-    setSaving(true); setFormError('');
-    try {
-      await api.patch(`/babies/${modal.baby.id}/discharge`);
-      fetchBabies(); closeModal();
-    } catch (err) {
-      setFormError(err.response?.data?.error ?? 'Failed to discharge baby.');
-    } finally { setSaving(false); }
-  }
-
-  async function handleReadmit(roomId) {
-    setSaving(true); setFormError('');
-    try {
-      await api.patch(`/babies/${modal.baby.id}/readmit`, { room_id: roomId });
-      fetchBabies(); closeModal();
-    } catch (err) {
-      setFormError(err.response?.data?.error ?? 'Failed to readmit baby.');
-    } finally { setSaving(false); }
-  }
-
-  async function handleReassign(roomId) {
-    setSaving(true); setFormError('');
-    try {
-      await api.patch(`/babies/${modal.baby.id}/reassign-room`, { room_id: roomId });
-      fetchBabies(); closeModal();
-    } catch (err) {
-      setFormError(err.response?.data?.error ?? 'Failed to reassign room.');
-    } finally { setSaving(false); }
-  }
+  const th = { padding: '10px 14px', color: c.textMuted, fontWeight: 700, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' };
+  const td = { padding: '12px 14px', color: c.text, fontSize: 14, verticalAlign: 'middle' };
 
   return (
     <div>
-      {/* Toolbar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {FILTERS.map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{
-                padding: '5px 14px', borderRadius: 999, border: '1px solid',
-                borderColor: filter === f ? '#1d4ed8' : '#d1d5db',
-                background: filter === f ? '#eff6ff' : '#fff',
-                color: filter === f ? '#1d4ed8' : '#6b7280',
-                cursor: 'pointer', fontSize: 13, fontWeight: filter === f ? 600 : 400,
-              }}
-            >
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-            </button>
-          ))}
+      <PageHeader
+        title="Babies"
+        subtitle="Manage babies, rooms, and admissions"
+        actions={<Button icon={<Plus size={16} />} onClick={() => setModal({ type: 'add' })}>Add baby</Button>}
+      />
+
+      {/* Toolbar: search-by-ID + status filter */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 18 }}>
+        <div style={{ position: 'relative', flex: '1 1 260px', maxWidth: 340 }}>
+          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+            <Search size={16} color={c.textMuted} />
+          </span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by ID (e.g. B-00042)"
+            aria-label="Search babies by ID"
+            style={{
+              width: '100%', padding: '10px 12px 10px 38px', fontSize: 14,
+              borderRadius: theme.radius.sm, border: `1.5px solid ${c.border}`,
+              background: c.cardBg, color: c.text, outline: 'none',
+            }}
+          />
         </div>
-        <button onClick={() => setModal({ type: 'add' })} style={primaryBtn}>+ Add Baby</button>
+
+        <div style={{ display: 'flex', gap: 6 }}>
+          {FILTERS.map(f => {
+            const active = filter === f;
+            return (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                style={{
+                  padding: '7px 16px', borderRadius: theme.radius.pill,
+                  border: `1.5px solid ${active ? c.accent : c.border}`,
+                  background: active ? c.accentSoft : c.cardBg,
+                  color: active ? c.accent : c.textMuted,
+                  cursor: 'pointer', fontSize: 13, fontWeight: active ? 800 : 600,
+                }}
+              >
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {loading && <p style={{ color: '#6b7280' }}>Loading…</p>}
-      {error   && <p style={{ color: 'red' }}>{error}</p>}
-      {!loading && babies.length === 0 && <p style={{ color: '#6b7280' }}>No babies found.</p>}
+      {error && <p style={{ color: c.danger }}>{error}</p>}
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-        <thead>
-          <tr style={{ borderBottom: '2px solid #e5e7eb', textAlign: 'left' }}>
-            {['Name', 'DOB', 'Gender', 'Room', 'Status', 'Admitted', 'Actions'].map(h => (
-              <th key={h} style={{ padding: '8px 10px', color: '#6b7280', fontWeight: 600, fontSize: 12 }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {babies.map(baby => (
-            <tr key={baby.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-              <td style={{ padding: '12px 10px', fontWeight: 600 }}>{baby.first_name} {baby.last_name}</td>
-              <td style={{ padding: '12px 10px', color: '#6b7280' }}>{toDateInput(baby.date_of_birth)}</td>
-              <td style={{ padding: '12px 10px', color: '#6b7280', textTransform: 'capitalize' }}>{baby.gender}</td>
-              <td style={{ padding: '12px 10px', color: '#6b7280' }}>
-                {baby.room_number ? `Room ${baby.room_number}` : '—'}
-              </td>
-              <td style={{ padding: '12px 10px' }}><StatusBadge status={baby.status} /></td>
-              <td style={{ padding: '12px 10px', color: '#6b7280' }}>{toDateInput(baby.admission_date)}</td>
-              <td style={{ padding: '12px 10px' }}>
-                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                  {baby.status === 'active' && (
-                    <>
-                      <button onClick={() => setModal({ type: 'edit', baby })}
-                        style={{ padding: '3px 9px', borderRadius: 5, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 12 }}>
-                        Edit
-                      </button>
-                      <button onClick={() => setModal({ type: 'reassign', baby })}
-                        style={{ padding: '3px 9px', borderRadius: 5, border: '1px solid #bfdbfe', background: '#fff', color: '#1d4ed8', cursor: 'pointer', fontSize: 12 }}>
-                        Move Room
-                      </button>
-                      <button onClick={() => setModal({ type: 'discharge', baby })}
-                        style={{ padding: '3px 9px', borderRadius: 5, border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', cursor: 'pointer', fontSize: 12 }}>
-                        Discharge
-                      </button>
-                    </>
-                  )}
-                  {baby.status === 'discharged' && (
-                    <button onClick={() => setModal({ type: 'readmit', baby })}
-                      style={{ padding: '3px 9px', borderRadius: 5, border: '1px solid #86efac', background: '#fff', color: '#15803d', cursor: 'pointer', fontSize: 12 }}>
-                      Readmit
-                    </button>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {loading ? (
+        <Spinner />
+      ) : babies.length === 0 ? (
+        <EmptyState
+          icon={<BabyIcon size={34} color={c.textFaint} />}
+          title={debounced ? `No babies match “${debounced}”` : 'No babies here yet'}
+          hint={debounced ? 'Try a different ID, or clear the search.' : 'Add a baby to get started.'}
+        />
+      ) : (
+        <div style={{ background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: theme.radius.lg, boxShadow: theme.shadow.md, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: c.subtleBg }}>
+                  {['Name', 'ID', 'DOB', 'Gender', 'Room', 'Status', 'Admitted', 'Actions'].map(h => (
+                    <th key={h} style={th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {babies.map(baby => (
+                  <tr key={baby.id} style={{ borderTop: `1px solid ${c.border}` }}>
+                    <td style={{ ...td, fontWeight: 700 }}>{baby.first_name} {baby.last_name}</td>
+                    <td style={{ ...td, color: c.textMuted, fontVariantNumeric: 'tabular-nums' }}>{baby.record_number ?? '—'}</td>
+                    <td style={{ ...td, color: c.textMuted }}>{fmtDate(baby.date_of_birth)}</td>
+                    <td style={{ ...td, color: c.textMuted, textTransform: 'capitalize' }}>{baby.gender}</td>
+                    <td style={{ ...td, color: c.textMuted }}>{baby.room_number ? `Room ${baby.room_number}` : '—'}</td>
+                    <td style={td}><Badge tone={baby.status === 'active' ? 'success' : 'neutral'}>{baby.status === 'active' ? 'Active' : 'Discharged'}</Badge></td>
+                    <td style={{ ...td, color: c.textMuted }}>{fmtDate(baby.admission_date)}</td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <Button size="sm" variant="ghost" icon={<AudioLines size={13} />} onClick={() => navigate(`/admin/babies/${baby.id}/recordings`)}>Recordings</Button>
+                        {baby.status === 'active' ? (
+                          <>
+                            <Button size="sm" variant="ghost" icon={<Pencil size={13} />} onClick={() => setModal({ type: 'edit', baby })}>Edit</Button>
+                            <Button size="sm" variant="ghost" icon={<ArrowRightLeft size={13} />} onClick={() => setModal({ type: 'reassign', baby })}>Move</Button>
+                            <Button size="sm" variant="ghost" icon={<LogOut size={13} />} style={{ color: c.danger, borderColor: c.dangerSoft }} onClick={() => setModal({ type: 'discharge', baby })}>Discharge</Button>
+                          </>
+                        ) : (
+                          <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} style={{ color: c.success, borderColor: c.successSoft }} onClick={() => setModal({ type: 'readmit', baby })}>Readmit</Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
-      {/* Add modal */}
       {modal?.type === 'add' && (
-        <Modal title="Add Baby" onClose={closeModal}>
+        <Modal title="Add baby" onClose={closeModal}>
           <BabyForm activeRooms={activeRooms} onSubmit={handleAdd} loading={saving} error={formError} />
         </Modal>
       )}
-
-      {/* Edit modal */}
       {modal?.type === 'edit' && (
         <Modal title={`Edit ${modal.baby.first_name} ${modal.baby.last_name}`} onClose={closeModal}>
           <BabyForm initial={modal.baby} activeRooms={activeRooms} onSubmit={handleEdit} loading={saving} error={formError} />
         </Modal>
       )}
-
-      {/* Discharge confirmation */}
       {modal?.type === 'discharge' && (
-        <Modal title="Discharge Baby" onClose={closeModal}>
-          <p style={{ marginTop: 0, color: '#374151' }}>
-            Discharge <strong>{modal.baby.first_name} {modal.baby.last_name}</strong>?
-            This will cancel all pending and scheduled recordings.
+        <Modal title="Discharge baby" onClose={closeModal}>
+          <p style={{ marginTop: 0, color: c.text, fontSize: 14 }}>
+            Discharge <strong>{modal.baby.first_name} {modal.baby.last_name}</strong>? This will cancel all pending and scheduled recordings.
           </p>
-          {formError && <p style={{ color: 'red', fontSize: 13 }}>{formError}</p>}
+          {formError && <p style={{ color: c.danger, fontSize: 13 }}>{formError}</p>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={closeModal} style={cancelBtn}>Cancel</button>
-            <button onClick={handleDischarge} disabled={saving} style={dangerBtn}>
-              {saving ? 'Discharging…' : 'Discharge'}
-            </button>
+            <Button variant="ghost" onClick={closeModal}>Cancel</Button>
+            <Button variant="danger" onClick={handleDischarge} disabled={saving}>{saving ? 'Discharging…' : 'Discharge'}</Button>
           </div>
         </Modal>
       )}
-
-      {/* Readmit — needs room picker */}
       {modal?.type === 'readmit' && (
-        <RoomPickerModal
-          title={`Readmit ${modal.baby.first_name} ${modal.baby.last_name}`}
-          onSubmit={handleReadmit}
-          onClose={closeModal}
-          loading={saving}
-          error={formError}
-        />
+        <RoomPickerModal title={`Readmit ${modal.baby.first_name} ${modal.baby.last_name}`} onSubmit={handleReadmit} onClose={closeModal} loading={saving} error={formError} />
       )}
-
-      {/* Reassign room */}
       {modal?.type === 'reassign' && (
-        <RoomPickerModal
-          title={`Move ${modal.baby.first_name} ${modal.baby.last_name} to a New Room`}
-          onSubmit={handleReassign}
-          onClose={closeModal}
-          loading={saving}
-          error={formError}
-        />
+        <RoomPickerModal title={`Move ${modal.baby.first_name} ${modal.baby.last_name} to a new room`} onSubmit={handleReassign} onClose={closeModal} loading={saving} error={formError} />
       )}
     </div>
   );

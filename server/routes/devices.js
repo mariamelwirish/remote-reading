@@ -19,6 +19,19 @@ async function validateBabyExists(baby_id) {
     return null;
 }
 
+// Next auto device_code, e.g. "PI-00003". Robust against mixed formats
+// (the legacy "PI-001" vs padded "PI-00002") by taking the max numeric suffix
+// rather than a lexicographic sort.
+async function nextDeviceCode() {
+    const [rows] = await pool.query("SELECT device_code FROM devices WHERE device_code LIKE 'PI-%'");
+    let max = 0;
+    for (const r of rows) {
+        const num = parseInt(String(r.device_code).split('-')[1], 10);
+        if (!Number.isNaN(num) && num > max) max = num;
+    }
+    return `PI-${String(max + 1).padStart(5, '0')}`;
+}
+
 // GET /api/v1/devices
 // Admin + Nurse: list all devices with derived room (via baby), current baby, and online status.
 // Room is looked up through the baby, not stored on the device — an unassigned device
@@ -31,7 +44,13 @@ router.get('/', authenticate, requireRole('nurse', 'admin'), async (req, res) =>
                 b.id AS baby_id, b.first_name AS baby_first_name, b.last_name AS baby_last_name,
                 r.id AS room_id, r.room_number,
                 CASE
-                    WHEN d.last_seen_at IS NOT NULL AND d.last_seen_at > (NOW() - INTERVAL 2 MINUTE)
+                    -- Online = the live LWT/connect flag is TRUE *and* we've heard a
+                    -- heartbeat recently. The flag flips to FALSE fast (~90s) when the
+                    -- device drops (Last Will), while the last_seen window is the
+                    -- fallback in case a Last Will message was ever missed.
+                    WHEN d.is_online = TRUE
+                         AND d.last_seen_at IS NOT NULL
+                         AND d.last_seen_at > (NOW() - INTERVAL 2 MINUTE)
                     THEN TRUE ELSE FALSE
                 END AS is_online
          FROM devices d
@@ -65,42 +84,53 @@ router.get('/', authenticate, requireRole('nurse', 'admin'), async (req, res) =>
 // assignment is a separate, deliberate action via PATCH /devices/:id/assign-baby.
 router.post('/', authenticate, requireRole('admin'), async (req, res) => {
     const { device_code } = req.body;
-
-    if (!device_code || typeof device_code !== 'string' || device_code.trim() === '') {
-        return res.status(400).json({ error: 'device_code is required!' });
-    }
-
-    const trimmedCode = device_code.trim();
+    const providedCode = typeof device_code === 'string' ? device_code.trim() : '';
 
     try {
-        // Guard against duplicate device_code (schema enforces UNIQUE; this returns a clean 409).
-        const [existing] = await pool.query(
-            'SELECT id, is_active FROM devices WHERE device_code = ?',
-            [trimmedCode]
-        );
-        if (existing.length > 0) {
-            const device = existing[0];
-            if (device.is_active === 0) {
-                return res.status(409).json({
-                    error: `Device ${trimmedCode} already exists but is deactivated. Reactivate it instead of creating a new one.`,
-                    device_id: device.id,
-                    is_active: false
-                });
+        // ---- Path A: caller provided a code (e.g. the register-device.sh script) ----
+        if (providedCode) {
+            const [existing] = await pool.query(
+                'SELECT id, is_active FROM devices WHERE device_code = ?',
+                [providedCode]
+            );
+            if (existing.length > 0) {
+                const device = existing[0];
+                if (device.is_active === 0) {
+                    return res.status(409).json({
+                        error: `Device ${providedCode} already exists but is deactivated. Reactivate it instead of creating a new one.`,
+                        device_id: device.id,
+                        is_active: false
+                    });
+                }
+                return res.status(409).json({ error: 'A device with that code already exists!' });
             }
-            return res.status(409).json({ error: 'A device with that code already exists!' });
+
+            const id = uuidv4();
+            await pool.query(`INSERT INTO devices (id, device_code, is_active) VALUES (?, ?, TRUE)`, [id, providedCode]);
+            return res.status(201).json({
+                message: 'Device registered.',
+                device: { id, device_code: providedCode, baby_id: null, is_active: true }
+            });
         }
 
-        const id = uuidv4();
-        await pool.query(
-            `INSERT INTO devices (id, device_code, is_active)
-             VALUES (?, ?, TRUE)`,
-            [id, trimmedCode]
-        );
-
-        return res.status(201).json({
-            message: 'Device registered.',
-            device: { id, device_code: trimmedCode, baby_id: null, is_active: true }
-        });
+        // ---- Path B: no code provided → auto-generate a unique one (UI flow) ----
+        // Retry a couple of times in case two admins register at the same instant
+        // and both compute the same next code (UNIQUE constraint is the backstop).
+        for (let attempt = 0; attempt < 4; attempt++) {
+            const code = await nextDeviceCode();
+            const id = uuidv4();
+            try {
+                await pool.query(`INSERT INTO devices (id, device_code, is_active) VALUES (?, ?, TRUE)`, [id, code]);
+                return res.status(201).json({
+                    message: 'Device registered.',
+                    device: { id, device_code: code, baby_id: null, is_active: true }
+                });
+            } catch (insErr) {
+                if (insErr.code === 'ER_DUP_ENTRY') continue; // someone took it — recompute and retry
+                throw insErr;
+            }
+        }
+        return res.status(500).json({ error: 'Could not allocate a device ID. Please try again.' });
     } catch (err) {
         console.error('POST /devices error:', err);
         return res.status(500).json({ error: 'Failed to register device' });
@@ -203,6 +233,66 @@ router.patch('/:id/assign-baby', authenticate, requireRole('nurse', 'admin'), as
     } catch (err) {
         console.error('PATCH /devices/:id/assign-baby error:', err);
         return res.status(500).json({ error: 'Failed to assign device' });
+    }
+});
+
+// DELETE /api/v1/devices/:id
+// Admin only: permanently remove a device from the database (hard delete).
+// Guards: must be unassigned first, and we refuse if it has confirmed playback
+// history (deleting that would destroy clinical records — deactivate instead).
+// ?force=true also deletes the device's playback history (an explicit,
+// deliberate override — the UI asks for a second confirmation before sending it).
+router.delete('/:id', authenticate, requireRole('admin'), async (req, res) => {
+    const { id } = req.params;
+    const force = req.query.force === 'true';
+
+    try {
+        const [rows] = await pool.query('SELECT id, device_code, baby_id FROM devices WHERE id = ?', [id]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Device not found!' });
+        }
+        const device = rows[0];
+
+        if (device.baby_id !== null) {
+            return res.status(409).json({ error: 'This speaker is still assigned to a baby. Unassign it first, then delete.' });
+        }
+
+        const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM playback_log WHERE device_id = ?', [id]);
+
+        // Default: protect the audit trail. Caller must opt in with force=true.
+        if (n > 0 && !force) {
+            return res.status(409).json({
+                error: `This speaker has ${n} confirmed playback record(s) tied to it. Deleting it would erase clinical history, so it can’t be fully removed. Deactivate it instead.`,
+                playback_records: n,
+            });
+        }
+
+        // Force path: remove the playback records and the device together, atomically.
+        if (n > 0) {
+            const connection = await pool.getConnection();
+            try {
+                await connection.beginTransaction();
+                await connection.query('DELETE FROM playback_log WHERE device_id = ?', [id]);
+                await connection.query('DELETE FROM devices WHERE id = ?', [id]);
+                await connection.commit();
+            } catch (txErr) {
+                await connection.rollback();
+                throw txErr;
+            } finally {
+                connection.release();
+            }
+            return res.status(200).json({ message: `Device ${device.device_code} permanently deleted, along with ${n} playback record(s).` });
+        }
+
+        await pool.query('DELETE FROM devices WHERE id = ?', [id]);
+        return res.status(200).json({ message: `Device ${device.device_code} permanently deleted.` });
+    } catch (err) {
+        // Backstop for any other FK reference we didn't anticipate.
+        if (err.errno === 1451 || err.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(409).json({ error: 'This speaker is referenced by other records and can’t be fully deleted. Deactivate it instead.' });
+        }
+        console.error('DELETE /devices/:id error:', err);
+        return res.status(500).json({ error: 'Failed to delete device.' });
     }
 });
 

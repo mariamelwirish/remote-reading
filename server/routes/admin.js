@@ -307,4 +307,119 @@ router.post('/resend-invite', authenticate, requireRole('admin', 'nurse'), async
     }
 });
 
+// ===================================================================
+// ADMIN OVERSIGHT (read-only) — lets an admin see the whole system:
+// the nurse roster + each nurse's work, and the parent roster + which
+// baby each parent is linked to. Admin-only by design.
+// ===================================================================
+
+// GET /api/v1/admin/nurses
+// Nurse roster with an activity summary (how much each nurse has done).
+router.get('/nurses', authenticate, requireRole('admin'), async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT
+                u.id, u.hospital_id, u.first_name, u.last_name, u.email,
+                u.is_active, u.invite_used, u.created_at,
+                COALESCE(a.total_actions, 0)   AS total_actions,
+                COALESCE(a.scheduled_count, 0) AS scheduled_count,
+                COALESCE(a.played_count, 0)    AS played_count,
+                COALESCE(a.rejected_count, 0)  AS rejected_count,
+                a.last_action_at
+             FROM users u
+             LEFT JOIN (
+                SELECT changed_by,
+                    COUNT(*)                        AS total_actions,
+                    SUM(to_status = 'scheduled')    AS scheduled_count,
+                    SUM(to_status = 'played')       AS played_count,
+                    SUM(to_status = 'rejected')     AS rejected_count,
+                    MAX(changed_at)                 AS last_action_at
+                FROM recording_status_history
+                GROUP BY changed_by
+             ) a ON a.changed_by = u.id
+             WHERE u.role = 'nurse'
+             ORDER BY u.created_at DESC`
+        );
+        return res.status(200).json(rows);
+    } catch (err) {
+        console.error('GET /admin/nurses error:', err);
+        return res.status(500).json({ error: 'Failed to load nurses.' });
+    }
+});
+
+// GET /api/v1/admin/nurses/:id/activity
+// Full audit trail of one nurse's actions (what, which baby, when, note).
+router.get('/nurses/:id/activity', authenticate, requireRole('admin'), async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [nurses] = await pool.query(
+            "SELECT id, hospital_id, first_name, last_name, email, is_active, invite_used, created_at FROM users WHERE id = ? AND role = 'nurse'",
+            [id]
+        );
+        if (nurses.length === 0) {
+            return res.status(404).json({ error: 'Nurse not found.' });
+        }
+
+        const [activity] = await pool.query(
+            `SELECT
+                h.id, h.from_status, h.to_status, h.note, h.changed_at,
+                r.id AS recording_id, r.title AS recording_title,
+                b.id AS baby_id, b.record_number,
+                b.first_name AS baby_first_name, b.last_name AS baby_last_name
+             FROM recording_status_history h
+             JOIN recordings r ON r.id = h.recording_id
+             JOIN babies b ON b.id = r.baby_id
+             WHERE h.changed_by = ?
+             ORDER BY h.changed_at DESC
+             LIMIT 200`,
+            [id]
+        );
+
+        return res.status(200).json({ nurse: nurses[0], activity });
+    } catch (err) {
+        console.error('GET /admin/nurses/:id/activity error:', err);
+        return res.status(500).json({ error: 'Failed to load nurse activity.' });
+    }
+});
+
+// GET /api/v1/admin/parents
+// Parent roster, each with the babies they're linked to (name, ID, relationship).
+router.get('/parents', authenticate, requireRole('admin'), async (req, res) => {
+    try {
+        const [parents] = await pool.query(
+            `SELECT id, hospital_id, first_name, last_name, email, is_active, invite_used, created_at
+             FROM users WHERE role = 'parent'
+             ORDER BY created_at DESC`
+        );
+
+        const [links] = await pool.query(
+            `SELECT pb.parent_id, pb.relationship,
+                    b.id AS baby_id, b.record_number, b.status,
+                    b.first_name AS baby_first_name, b.last_name AS baby_last_name
+             FROM parent_baby pb
+             JOIN babies b ON b.id = pb.baby_id`
+        );
+
+        // Group linked babies under each parent.
+        const byParent = new Map();
+        for (const l of links) {
+            if (!byParent.has(l.parent_id)) byParent.set(l.parent_id, []);
+            byParent.get(l.parent_id).push({
+                baby_id: l.baby_id,
+                record_number: l.record_number,
+                first_name: l.baby_first_name,
+                last_name: l.baby_last_name,
+                relationship: l.relationship,
+                status: l.status,
+            });
+        }
+
+        const result = parents.map(p => ({ ...p, babies: byParent.get(p.id) ?? [] }));
+        return res.status(200).json(result);
+    } catch (err) {
+        console.error('GET /admin/parents error:', err);
+        return res.status(500).json({ error: 'Failed to load parents.' });
+    }
+});
+
 module.exports = router;

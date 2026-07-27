@@ -10,7 +10,19 @@ const pool = require('./config/db');
 const { getPresignedUrl } = require('./utils/s3');
 const { publishPlay } = require('./utils/iot');
 
+// Guards against overlapping runs: if one minute's pass is still working when
+// the next cron tick fires, we skip the new run rather than let both SELECT the
+// same 'pending' schedules and fire the play command twice (which the device
+// would play as overlapping audio — an "echo").
+let isProcessing = false;
+
 async function processDueSchedules() {
+    if (isProcessing) {
+        console.warn('Scheduler: previous run still in progress, skipping this tick.');
+        return;
+    }
+    isProcessing = true;
+
     const connection = await pool.getConnection();
 
     try {
@@ -33,6 +45,7 @@ async function processDueSchedules() {
         console.error('Scheduler: error checking due schedules:', err);
     } finally {
         connection.release();
+        isProcessing = false;
     }
 }
 

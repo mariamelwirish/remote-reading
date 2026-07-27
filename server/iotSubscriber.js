@@ -26,6 +26,14 @@ function buildClient() {
         }
     );
 
+    // Force a CLEAN session on every (re)connect. Without this, after an
+    // unexpected drop (e.g. AWS_IO_SOCKET_CLOSED) the client can resume a session
+    // where the broker believes we're still subscribed but no messages actually
+    // flow — the backend goes "deaf" and never sees devices come back online
+    // until the process is restarted. A clean session guarantees the
+    // re-subscribe in the connectionSuccess handler always takes effect.
+    wsConfig.withSessionBehavior(mqtt5.ClientSessionBehavior.Clean);
+
     return new mqtt5.Mqtt5Client(wsConfig.build());
 }
 
